@@ -63,7 +63,7 @@ if (!wantsHelp) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if ((actionCommand as any)._isGroup === true && actionCommand.args.length === 0) return
 
-    const skipConfigNames: ReadonlySet<string> = new Set(['docs', 'config', 'sanitize', 'cli-schema'])
+    const skipConfigNames: ReadonlySet<string> = new Set(['docs', 'config', 'sanitize', 'cli-schema', 'quickstart'])
     for (let c: Command | null = actionCommand; c != null; c = c.parent) {
       if (skipConfigNames.has(c.name())) return
     }
@@ -245,7 +245,7 @@ const willJustPrintHelp = wantsHelp || (CONTEXT_NAMESPACES.has(firstArg ?? '') &
 if (firstArg != null && (!willJustPrintHelp || hasProfileFlag)) {
   const SKIP_EARLY_CONFIG: ReadonlySet<string> = new Set([
     'version', 'extension', 'status', 'completion', '__complete',
-    'docs', 'config', 'sanitize', 'cli-schema',
+    'docs', 'config', 'sanitize', 'cli-schema', 'quickstart',
   ])
   if (!SKIP_EARLY_CONFIG.has(firstArg)) {
     const profileArgIdx = process.argv.indexOf('--command-profile')

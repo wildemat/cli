@@ -1,0 +1,156 @@
+/*
+ * Copyright Elasticsearch B.V. and contributors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * Auth node: detect first, ask second.
+ *
+ * If the active context already carries a working Cloud API key, the whole
+ * node is skipped. Otherwise the browser is pointed at signup / API-key pages
+ * (URLs always printed as text too), the key is pasted masked, probed, and
+ * written through the in-process config writer + OS secret store — the key
+ * never appears in argv or on stdout.
+ *
+ * This node is deliberately self-contained and swappable: OAuth/PKCE replaces
+ * exactly this module later, so no auth assumptions may leak into other nodes.
+ */
+
+import { loadConfig } from '../../config/loader.ts'
+import { checkCloud } from '../../status/checks.ts'
+import {
+  readRawConfig,
+  writeConfig,
+  upsertContext,
+  hasInlineSecrets,
+  resolveConfigPath,
+} from '../../config/writer.ts'
+import { getSecretStore } from '../../config/secret-store.ts'
+import { CLOUD_API_URL, SIGNUP_URL, API_KEYS_URL } from '../constants.ts'
+import { QuickstartHalt, type QuickstartDeps } from '../types.ts'
+
+const KEYCHAIN_SERVICE = 'elastic-cli'
+const DEFAULT_CLOUD_CONTEXT = 'elastic-cloud'
+
+export interface AuthResult {
+  /** Context whose `cloud` block subsequent nodes should use. */
+  cloudContextName: string
+  /** True when an existing working credential was detected and reused. */
+  reused: boolean
+}
+
+/**
+ * Detects a working Cloud credential in the active context, or interviews
+ * the user for one and persists it.
+ */
+export async function runAuthNode (deps: QuickstartDeps): Promise<AuthResult> {
+  const detected = await detectExistingCloudContext(deps)
+  if (detected != null) {
+    deps.prompter.success(`Using Cloud credentials from context "${detected}"`)
+    return { cloudContextName: detected, reused: true }
+  }
+
+  deps.prompter.note(
+    [
+      'You need an Elastic Cloud account and an organization API key.',
+      '',
+      `  Sign up (free trial):  ${SIGNUP_URL}`,
+      `  Create an API key:     ${API_KEYS_URL}`,
+    ].join('\n'),
+    'Connect to Elastic Cloud',
+  )
+  const opened = deps.openBrowser(API_KEYS_URL)
+  if (opened) deps.prompter.info('Opened your browser (links above if it did not appear).')
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const key = (await deps.prompter.password('Paste your Elastic Cloud API key')).trim()
+    if (key.length === 0) continue
+    const probe = await checkCloud({ url: CLOUD_API_URL, auth: { api_key: key } }, deps.fetchFn)
+    if (probe.ok) {
+      const contextName = await persistCloudKey(key)
+      deps.prompter.success(`API key verified and saved to context "${contextName}" (secret stored securely)`)
+      return { cloudContextName: contextName, reused: false }
+    }
+    deps.prompter.warn(`That key did not work (${probe.error}).${attempt === 1 ? ' One more try.' : ''}`)
+  }
+
+  throw new QuickstartHalt(
+    'auth_failed',
+    'Could not verify an Elastic Cloud API key.',
+    [
+      `Create a key at ${API_KEYS_URL}`,
+      'Then configure it manually: elastic config context add <name> --cloud-url ' +
+        `${CLOUD_API_URL} (see elastic config --help)`,
+      'Re-run: elastic quickstart',
+    ],
+  )
+}
+
+/**
+ * Returns the name of a context whose cloud block answers an authenticated
+ * probe, or undefined. Checks the active context first, then any other
+ * context that has a cloud block.
+ */
+async function detectExistingCloudContext (deps: QuickstartDeps): Promise<string | undefined> {
+  const active = await loadConfig()
+  const activeName = active.ok ? active.contextName : undefined
+
+  const candidates: string[] = []
+  if (active.ok && active.value.context.cloud != null) candidates.push(active.contextName)
+
+  // Other contexts with a cloud block; raw scan only — secrets resolve per-context below.
+  try {
+    const raw = await readRawConfig(resolveConfigPath())
+    for (const [name, ctx] of Object.entries(raw.contexts)) {
+      if (name === activeName) continue
+      if (ctx != null && typeof ctx === 'object' && (ctx as Record<string, unknown>).cloud != null) {
+        candidates.push(name)
+      }
+    }
+  } catch {
+    // unreadable config — treat as no existing credentials
+  }
+
+  for (const name of candidates) {
+    const resolved = name === activeName && active.ok
+      ? active
+      : await loadConfig({ contextName: name, refresh: true })
+    if (!resolved.ok) continue
+    const cloud = resolved.value.context.cloud
+    if (cloud?.auth == null || !('api_key' in cloud.auth)) continue
+    const probe = await checkCloud(cloud, deps.fetchFn)
+    if (probe.ok) return name
+  }
+  return undefined
+}
+
+/**
+ * Writes the pasted key into the config through the secret store; the YAML
+ * holds a `$(keychain:...)` expression when an OS store is available, the
+ * plain value (0600 file) otherwise.
+ */
+async function persistCloudKey (apiKey: string): Promise<string> {
+  const contextName = DEFAULT_CLOUD_CONTEXT
+  const configPath = resolveConfigPath()
+  const config = await readRawConfig(configPath)
+
+  const store = await getSecretStore()
+  const storeAvailable = await store.isAvailable()
+  let keyValue: string
+  if (storeAvailable) {
+    const account = `${contextName}:cloud.auth.api_key`
+    await store.put(KEYCHAIN_SERVICE, account, apiKey)
+    keyValue = store.resolverExpr(KEYCHAIN_SERVICE, account)
+  } else {
+    keyValue = apiKey
+  }
+
+  let next = upsertContext(config, contextName, {
+    cloud: { url: CLOUD_API_URL, auth: { api_key: keyValue } },
+  })
+  if (next.current_context === '') {
+    next = { ...next, current_context: contextName }
+  }
+  await writeConfig(configPath, next, { restrictPermissions: hasInlineSecrets(next) })
+  return contextName
+}

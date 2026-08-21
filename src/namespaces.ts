@@ -114,6 +114,17 @@ export const NAMESPACES: NamespaceEntry[] = [
     },
   },
   {
+    name: 'quickstart',
+    description: 'Zero-to-search onboarding: create a Vector DB serverless project and see semantic search work',
+    // Quickstart authors config (auth node writes the context), so it must
+    // not require a resolvable context to start.
+    requiresContext: false,
+    load: async () => {
+      const { registerQuickstartCommand } = await import('./quickstart/register.ts')
+      return registerQuickstartCommand()
+    },
+  },
+  {
     name: 'docs',
     description: 'Search, read, and ask questions about Elastic documentation',
     requiresContext: false,

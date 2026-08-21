@@ -45,7 +45,7 @@ export function buildRunbook (): JsonValue {
         capability: 'An org API key stored in a named config context; secrets go to the OS keychain, never argv.',
         ask_user: `Do you already have an Elastic Cloud account and API key? If not, send them to ${SIGNUP_URL} then ${API_KEYS_URL}.`,
         commands: [
-          'elastic config context add <name> --json  # see --help --json for fields; cloud.url is ' + CLOUD_API_URL,
+          `elastic config context add <name> --cloud-url ${CLOUD_API_URL} --cloud-api-key <key> --json`,
           'elastic status --json  # probes the cloud block; 401/403 means a bad key',
         ],
         notes: 'If a context with a working cloud api_key already exists, skip this step.',
@@ -90,7 +90,7 @@ export function buildRunbook (): JsonValue {
         title: 'Keep building',
         capability: 'Two co-equal exits: keep working here with the saved context, or open Kibana (endpoint saved in the context).',
         commands: [
-          'elastic config context get quickstart --json  # endpoints, including kibana',
+          'elastic config context list --json  # contexts and their endpoints, including kibana',
           `elastic es search --index ${SAMPLE_INDEX} --use-context quickstart --json`,
         ],
         notes: 'Next: hybrid retrieval (RRF), ES|QL aggregations, or point the Elastic Bookshop reference app at the project.',

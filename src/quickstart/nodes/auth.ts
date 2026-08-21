@@ -79,8 +79,7 @@ export async function runAuthNode (deps: QuickstartDeps): Promise<AuthResult> {
     'Could not verify an Elastic Cloud API key.',
     [
       `Create a key at ${API_KEYS_URL}`,
-      'Then configure it manually: elastic config context add <name> --cloud-url ' +
-        `${CLOUD_API_URL} (see elastic config --help)`,
+      `Then configure it manually: elastic config context add elastic-cloud --cloud-url ${CLOUD_API_URL} --cloud-api-key <key>`,
       'Re-run: elastic quickstart',
     ],
   )

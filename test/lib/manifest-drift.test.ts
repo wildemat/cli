@@ -106,7 +106,10 @@ describe('manifest/definition parity (upstream drift guard)', () => {
 
   describe('serverless', () => {
     it('pins the serverless command count', async () => {
-      const expected = 41
+      // 41 upstream + 6 hand-authored vectordb-projects commands (see
+      // src/cloud/vectordb-apis.ts; fold into the upstream count once
+      // @elastic/schemas publishes the module).
+      const expected = 47
       const actual = (await loadServerlessApis()).length
       assert.equal(actual, expected, countDriftMessage('serverless', expected, actual))
     })

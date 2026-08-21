@@ -14,3 +14,18 @@ Use the CLI to:
 - Automate operations in CI/CD pipelines and LLM agent workflows
 
 To get started, see [Install the Elastic CLI](./installation.md) and [Configure the Elastic CLI](./configuration.md).
+
+## Quickstart
+
+New to Elastic? `elastic quickstart` takes you from nothing to a working
+Vector DB serverless project with sample data indexed and a live comparison
+of keyword (BM25) versus semantic search, then hands off to your coding agent
+or Kibana:
+
+```sh
+npx @elastic/cli quickstart
+```
+
+At a TTY the command runs interactively. Without a TTY (or with `--json`) it
+emits a self-describing runbook for coding agents, which then run the
+underlying `elastic` commands directly.

@@ -300,6 +300,25 @@ elasticsearch:
 
 ## Commands
 
+### `quickstart`
+
+Zero-to-search onboarding: creates a Vector DB serverless project on Elastic
+Cloud, indexes a bundled sample dataset with `semantic_text`, and shows the
+same query answered by keyword (BM25) and semantic search side by side — then
+hands off to your coding agent or Kibana.
+
+```bash
+elastic quickstart
+```
+
+The command takes no flags of its own. At a TTY it runs interactively; with
+`--json` or without a TTY it emits a self-describing runbook that a coding
+agent follows by running the underlying `elastic` commands directly.
+
+```bash
+elastic quickstart --json   # agent runbook
+```
+
 ### `version`
 
 Print the CLI version.
@@ -447,11 +466,12 @@ elastic cloud serverless projects search reset-credentials --id <id>
 ```
 
 `search` also accepts `elasticsearch` as an alias. Same commands are available
-under `observability` and `security`:
+under `observability`, `security`, and `vector` (Vector DB):
 
 ```bash
 elastic cloud serverless projects observability list
 elastic cloud serverless projects security create --wait <<< '{"name":"demo","region_id":"aws-us-east-1"}'
+elastic cloud serverless projects vector create --wait --save-as demo <<< '{"name":"demo","region_id":"aws-us-east-1"}'
 ```
 
 Other serverless resources:

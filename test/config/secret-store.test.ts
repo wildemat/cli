@@ -6,10 +6,12 @@
 import { describe, it, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import type { execSync as ExecSyncFn } from 'node:child_process'
+import type { spawnSync as SpawnSyncFn } from 'node:child_process'
 import {
   getSecretStore,
   _testSetExecSync,
   _testSetPlatform,
+  _testSetSpawnSync,
   _testStores,
 } from '../../src/config/secret-store.ts'
 
@@ -92,20 +94,34 @@ describe('MacOSKeychainStore', () => {
     while (restores.length > 0) restores.pop()!()
   })
 
-  it('put invokes `security add-generic-password -U` with shell-escaped values and passes secret via stdin', async () => {
-    const { fn, calls } = makeExec([{ match: 'security ', result: '' }])
-    restores.push(_testSetExecSync(fn))
+  it('put invokes `security add-generic-password -U` detached, with the secret fed twice via stdin', async () => {
+    const spawnCalls: Array<{ cmd: string, args: string[], options: Record<string, unknown> }> = []
+    restores.push(_testSetSpawnSync(((cmd: string, args: string[], options: Record<string, unknown>) => {
+      spawnCalls.push({ cmd, args, options })
+      return { status: 0, stdout: '', stderr: '' }
+    }) as unknown as typeof SpawnSyncFn))
     const store = new _testStores.MacOSKeychainStore()
     await store.put('elastic-cli', 'prod:es.api_key', "it's secret")
-    const put = calls.find(c => c.cmd.includes('add-generic-password'))!
-    assert.ok(put)
-    assert.match(put.cmd, /-U /)
-    assert.match(put.cmd, /-s 'elastic-cli'/)
-    assert.match(put.cmd, /-a 'prod:es.api_key'/)
-    // Secret must NOT appear in the command string (would be visible in `ps`)
-    assert.ok(!put.cmd.includes("it's secret"), 'secret must not be in argv')
-    // Secret IS passed via stdin
-    assert.equal((put.options as { input?: string }).input, "it's secret")
+    const put = spawnCalls[0]!
+    assert.equal(put.cmd, 'security')
+    assert.deepEqual(put.args, ['add-generic-password', '-U', '-s', 'elastic-cli', '-a', 'prod:es.api_key', '-w'])
+    // Secret must NOT appear in argv (would be visible in `ps`)…
+    assert.ok(!put.args.some((a) => a.includes("it's secret")), 'secret must not be in argv')
+    // …and `security` prompts for it twice ("retype"), so stdin answers twice.
+    assert.equal(put.options.input, "it's secret\nit's secret\n")
+    // Regression (#quickstart E2E): with a controlling TTY, `security -w`
+    // prompts on /dev/tty and ignores piped stdin entirely — the write hangs
+    // and times out. detached:true removes the controlling TTY.
+    assert.equal(put.options.detached, true)
+  })
+
+  it('put fails loudly on non-zero exit, spawn errors, and newline secrets', async () => {
+    const store = new _testStores.MacOSKeychainStore()
+    restores.push(_testSetSpawnSync((() => ({ status: 51, stdout: '', stderr: '' })) as unknown as typeof SpawnSyncFn))
+    await assert.rejects(() => store.put('svc', 'acct', 'x'), /status 51/)
+    restores.push(_testSetSpawnSync((() => ({ status: null, error: new Error('spawnSync security ETIMEDOUT') })) as unknown as typeof SpawnSyncFn))
+    await assert.rejects(() => store.put('svc', 'acct', 'x'), /ETIMEDOUT/)
+    await assert.rejects(() => store.put('svc', 'acct', 'multi\nline'), /newlines are not supported/)
   })
 
   it('delete swallows errors (idempotent)', async () => {
@@ -147,10 +163,10 @@ describe('MacOSKeychainStore', () => {
   })
 
   it('wraps underlying errors with context', async () => {
-    const { fn } = makeExec([
-      { match: 'security ', result: new Error('permission denied') },
-    ])
-    restores.push(_testSetExecSync(fn))
+    restores.push(_testSetSpawnSync((() => ({
+      status: null,
+      error: new Error('permission denied'),
+    })) as unknown as typeof SpawnSyncFn))
     const store = new _testStores.MacOSKeychainStore()
     await assert.rejects(
       () => store.put('svc', 'acct', 'x'),

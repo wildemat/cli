@@ -16,12 +16,13 @@ import type { ServiceBlock } from '../config/types.ts'
 import { buildAuthHeader } from '../lib/auth.ts'
 import { clientHeaders } from '../lib/meta.ts'
 
-/** Successful Elasticsearch probe. */
+/** Successful Elasticsearch probe. `nodes` is absent on serverless, which
+ * exposes no cluster-level APIs. */
 export interface EsCheckOk {
   ok: true
   url: string
   status: string
-  nodes: number
+  nodes?: number
 }
 
 /** Successful Kibana probe. */
@@ -108,7 +109,16 @@ export async function checkElasticsearch (
   fetchFn: typeof fetch = globalThis.fetch,
 ): Promise<EsCheck> {
   const result = await pingService(block.url, '/_cluster/health', block.auth, fetchFn)
-  if (!result.ok) return { ok: false, url: block.url, error: result.error }
+  if (!result.ok) {
+    // Serverless projects answer 410 Gone for cluster-level APIs; fall back
+    // to the root endpoint, which still proves connectivity and auth.
+    if (result.error === 'request failed (410)') {
+      const root = await pingService(block.url, '/', block.auth, fetchFn)
+      if (root.ok) return { ok: true, url: block.url, status: 'available' }
+      return { ok: false, url: block.url, error: root.error }
+    }
+    return { ok: false, url: block.url, error: result.error }
+  }
   const body = result.body
   if (body == null || typeof body !== 'object') {
     return { ok: false, url: block.url, error: 'unexpected response' }

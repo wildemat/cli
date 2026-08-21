@@ -47,6 +47,36 @@ describe('checkElasticsearch', () => {
     assert.equal(calls[0]!.init.method, 'GET')
   })
 
+  it('falls back to the root endpoint when _cluster/health is 410 (serverless)', async () => {
+    // Serverless projects hide cluster-level APIs behind 410 Gone; the probe
+    // must still prove connectivity + auth via GET /.
+    const { fetch: fetchFn, calls } = recordingFetch((url) =>
+      String(url).endsWith('/_cluster/health')
+        ? new Response('{"error":"api not available"}', { status: 410 })
+        : new Response(JSON.stringify({ name: 'serverless', version: { number: '9.6.0' } }), { status: 200 })
+    )
+    const result = await checkElasticsearch(
+      { url: 'https://proj.es.example', auth: { api_key: 'k' } },
+      fetchFn,
+    )
+    assert.deepEqual(result, { ok: true, url: 'https://proj.es.example', status: 'available' })
+    assert.equal(calls.length, 2)
+    assert.equal(calls[1]!.url, 'https://proj.es.example/')
+  })
+
+  it('reports the root-probe failure when the 410 fallback also fails', async () => {
+    const { fetch: fetchFn } = recordingFetch((url) =>
+      String(url).endsWith('/_cluster/health')
+        ? new Response('gone', { status: 410 })
+        : new Response('nope', { status: 401 })
+    )
+    const result = await checkElasticsearch(
+      { url: 'https://proj.es.example', auth: { api_key: 'bad' } },
+      fetchFn,
+    )
+    assert.deepEqual(result, { ok: false, url: 'https://proj.es.example', error: 'auth failed (401)' })
+  })
+
   it('strips trailing slashes from the URL', async () => {
     const { fetch: fetchFn, calls } = recordingFetch(() =>
       new Response(JSON.stringify({ status: 'yellow', number_of_nodes: 1 }), { status: 200 })

@@ -18,7 +18,7 @@
  * read back by the corresponding resolver.
  */
 
-import { execSync, type ExecSyncOptionsWithStringEncoding } from 'node:child_process'
+import { execSync, spawnSync, type ExecSyncOptionsWithStringEncoding } from 'node:child_process'
 
 /** Distinguishes between the supported secret-store implementations. */
 export type SecretStoreKind =
@@ -110,6 +110,15 @@ export function _testSetPlatform (p: string): () => void {
   return () => { _platform = prev }
 }
 
+let _spawnSync: typeof spawnSync = spawnSync
+
+/** @internal */
+export function _testSetSpawnSync (fn: typeof spawnSync): () => void {
+  const prev = _spawnSync
+  _spawnSync = fn
+  return () => { _spawnSync = prev }
+}
+
 // ---------------------------------------------------------------------------
 // Implementations
 // ---------------------------------------------------------------------------
@@ -144,17 +153,36 @@ class MacOSKeychainStore extends ShellSecretStore {
 
   async put (service: string, account: string, secret: string): Promise<void> {
     validateServiceAccount(service, account, this.kind)
-    try {
-      // -U updates an existing entry in-place instead of failing.
-      // -w with no argument reads the password from stdin, keeping the secret
-      // out of the process argument list.
-      _execSync(
-        `security add-generic-password -U -s ${shellEscape(service)} -a ${shellEscape(account)} -w`,
-        execOpts(5_000, secret)
-      )
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      throw new Error(`Keychain write failed for service="${service}", account="${account}": ${message}`, { cause: err })
+    // The stdin protocol below feeds the password line-by-line; a newline in
+    // the secret would silently truncate it, so refuse loudly instead.
+    if (secret.includes('\n') || secret.includes('\r')) {
+      throw new Error(`Keychain write failed for service="${service}", account="${account}": secrets containing newlines are not supported`)
+    }
+    // -U updates an existing entry in-place instead of failing. -w with no
+    // argument keeps the secret out of the process argument list, but
+    // `security` then PROMPTS for it — on the controlling TTY when one
+    // exists (ignoring piped stdin entirely), twice ("retype") otherwise.
+    // detached:true gives the child its own session with no controlling
+    // TTY, forcing the prompts onto stdin, which we answer twice.
+    // `detached` is honoured by spawnSync (it maps to uv_spawn's detached
+    // flag) but is missing from the SpawnSyncOptions typings, hence the cast.
+    const result = _spawnSync(
+      'security',
+      ['add-generic-password', '-U', '-s', service, '-a', account, '-w'],
+      {
+        input: `${secret}\n${secret}\n`,
+        timeout: 5_000,
+        detached: true,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      } as unknown as Parameters<typeof spawnSync>[2]
+    )
+    if (result.error != null || result.status !== 0) {
+      const message = result.error != null
+        ? result.error.message
+        : `security exited with status ${result.status}`
+      throw new Error(`Keychain write failed for service="${service}", account="${account}": ${message}`, { cause: result.error })
     }
   }
 

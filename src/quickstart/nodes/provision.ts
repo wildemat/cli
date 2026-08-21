@@ -141,6 +141,18 @@ export async function runProvisionNode (
   }
 
   if (!created.ok) {
+    // The project may exist even though saving the context failed (e.g. the
+    // OS keychain refused the write). Don't let a re-run create a duplicate.
+    if (created.error?.code === 'credential_policy_error') {
+      throw new QuickstartHalt(
+        'context_save_failed',
+        `The project was created, but saving its credentials failed: ${created.error.message}`,
+        [
+          `Find its id: elastic cloud serverless projects vector list --use-context ${cloudContextName}`,
+          `Save credentials to a context: elastic cloud serverless projects vector reset-credentials --id <id> --save-as ${name} --use-context ${cloudContextName}`,
+        ],
+      )
+    }
     throw new QuickstartHalt(
       'provision_failed',
       created.error?.message ?? `project creation exited with code ${created.exitCode}`,

@@ -96,6 +96,26 @@ export function buildRunbook (): JsonValue {
         notes: 'Next: hybrid retrieval (RRF), ES|QL aggregations, or point the Elastic Bookshop reference app at the project.',
       },
     ],
+    reference_app: {
+      title: 'Optional: run the Elastic Bookshop demo app against the project',
+      repo: LINKS.referenceApp,
+      notes: 'The app runs on the user\'s machine and points at the project — nothing deploys into Elastic Cloud. Its .env uses the APP\'s variable names (not ES_URL, not ELASTIC_ES_URL). Keep the demo profile; never hybrid (21k books, slow).',
+      env: {
+        ELASTICSEARCH_URL: '<elasticsearch endpoint from the context>',
+        ELASTIC_API_KEY: '<mint with: elastic es security create-api-key --name elastic-bookshop --use-context quickstart --json>',
+        KIBANA_URL: '<kibana endpoint from the context, optional>',
+        BOOKSHOP_PROFILE: 'demo',
+      },
+      commands: [
+        'git clone https://github.com/elastic/search-reference-app.git elastic-bookshop',
+        'cd elastic-bookshop && <write .env with the vars above, mode 0600>',
+        'docker compose up --build --detach   # backend :8001, frontend :3000',
+        'docker compose exec backend ./bookshop setup --profile demo',
+        'docker compose exec backend ./bookshop search "a story about growing up"',
+        'open http://localhost:3000 — self-guided tour at /guide',
+      ],
+      caveat: 'Beyond localhost, publicly reachable agent/inference routes can run up cost against the user\'s API key — see the repo\'s DEPLOYMENT.md.',
+    },
     links: {
       docs_quickstart: LINKS.docsQuickstart,
       agent_skill: LINKS.agentSkill,

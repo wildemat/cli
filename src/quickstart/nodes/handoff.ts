@@ -15,7 +15,7 @@ import { accessSync, constants, existsSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import spawn from 'cross-spawn'
 import { openBrowser } from '../browser.ts'
-import type { QuickstartDeps, QuickstartState } from '../types.ts'
+import { QuickstartHalt, type QuickstartDeps, type QuickstartState } from '../types.ts'
 
 export interface AgentCandidate {
   id: string
@@ -133,11 +133,29 @@ export async function runHandoffNode (
       label: `Hand off to ${a.label}`,
       hint: a.kind === 'ide' ? 'opens the workspace; paste the prompt' : 'launches with the context doc',
     })),
+    // Temporary in-band installer (see ../refapp/index.ts for the deletion contract).
+    { value: 'refapp', label: 'Run the Elastic Bookshop demo app against this project', hint: 'Docker; a real storefront on your data' },
     ...(kibanaUrl != null ? [{ value: 'kibana', label: 'Open Kibana', hint: 'explore the books index in the UI' }] : []),
     { value: 'done', label: 'I\'m done — just leave the summary', hint: 'everything above stays in your scrollback' },
   ]
 
   const choice = await prompter.select('Keep building — how do you want to continue?', options)
+
+  if (choice === 'refapp') {
+    const { setupReferenceApp } = await import('../refapp/index.ts')
+    try {
+      const app = await setupReferenceApp(deps, state)
+      return { choice: 'refapp', detail: app.appUrl }
+    } catch (err) {
+      if (err instanceof QuickstartHalt) {
+        prompter.warn(err.message)
+        for (const step of err.nextSteps) prompter.info(step)
+        prompter.info(`Your agent can finish this — hand it the context doc: ${handoffPrompt(docPath)}`)
+        return { choice: 'refapp', detail: `failed: ${err.code}` }
+      }
+      throw err
+    }
+  }
 
   if (choice === 'kibana' && kibanaUrl != null) {
     _openBrowser(kibanaUrl)

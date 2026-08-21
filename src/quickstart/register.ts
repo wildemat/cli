@@ -73,7 +73,8 @@ export function formatSummaryText (summary: Record<string, JsonValue>): string {
   return lines.join('\n')
 }
 
-async function quickstartHandler (parsed: ParsedResult): Promise<JsonValue> {
+/** Exported for direct unit testing; registered via {@link registerQuickstartCommand}. */
+export async function quickstartHandler (parsed: ParsedResult): Promise<JsonValue> {
   const jsonFlag = parsed.options['json'] === true
   const mode = detectMode(jsonFlag)
 

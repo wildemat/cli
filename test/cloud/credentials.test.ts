@@ -21,6 +21,7 @@ import type { JsonValue } from '../../src/factory.ts'
 import {
   _testSetExecSync as setSecretStoreExec,
   _testSetPlatform as setSecretStorePlatform,
+  _testSetSpawnSync as setSecretStoreSpawnSync,
 } from '../../src/config/secret-store.ts'
 
 const CREATE_RESPONSE: JsonValue = {
@@ -148,6 +149,12 @@ describe('applyCredentialPolicy', () => {
         calls.push({ cmd, options })
         return ''
       }) as unknown as typeof import('node:child_process').execSync))
+      // Keychain writes go through spawnSync (argv array); record them in the
+      // same shape as the execSync calls so assertions can grep one list.
+      restores.push(setSecretStoreSpawnSync(((cmd: string, args: string[], options?: unknown) => {
+        calls.push({ cmd: `${cmd} ${args.join(' ')}`, options })
+        return { status: 0, stdout: '', stderr: '' }
+      }) as unknown as typeof import('node:child_process').spawnSync))
     } else {
       restores.push(setSecretStorePlatform('linux'))
       restores.push(setSecretStoreExec(((cmd: string, options?: unknown) => {

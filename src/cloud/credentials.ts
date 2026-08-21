@@ -34,8 +34,8 @@ import type { JsonValue } from '../factory.ts'
 
 const KEYCHAIN_SERVICE = 'elastic-cli'
 
-const CREATE_PROJECT_RE = /^create-(?:elasticsearch|observability|security)-project$/
-const RESET_CREDENTIALS_RE = /^reset-(?:elasticsearch|observability|security)-project-credentials$/
+const CREATE_PROJECT_RE = /^create-(?:elasticsearch|observability|security|vectordb)-project$/
+const RESET_CREDENTIALS_RE = /^reset-(?:elasticsearch|observability|security|vectordb)-project-credentials$/
 
 /** Returns true when `cmdName` is a serverless command that returns credentials. */
 export function isCredentialCommand (cmdName: string): boolean {

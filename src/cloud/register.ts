@@ -29,6 +29,7 @@ const PROJECT_NAMESPACES: Record<string, string> = {
   'elasticsearch-projects': 'search',
   'observability-projects': 'observability',
   'security-projects': 'security',
+  'vectordb-projects': 'vector',
 }
 
 /**
@@ -66,6 +67,7 @@ const SERVERLESS_NAMESPACES = new Set<string>([
   'elasticsearch-projects',
   'observability-projects',
   'security-projects',
+  'vectordb-projects',
   'regions',
   'traffic-filters',
   'linked-projects',

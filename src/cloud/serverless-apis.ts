@@ -23,6 +23,7 @@ export async function loadServerlessApis (): Promise<CloudApiDefinition[]> {
     { regionsDefinitions },
     { securityProjectsDefinitions },
     { trafficFiltersDefinitions },
+    { vectordbProjectsDefinitions },
   ] = await Promise.all([
     import('@elastic/schemas/serverless/tools/apis/elasticsearch-projects.js'),
     import('@elastic/schemas/serverless/tools/apis/linked-candidate-projects.js'),
@@ -31,6 +32,8 @@ export async function loadServerlessApis (): Promise<CloudApiDefinition[]> {
     import('@elastic/schemas/serverless/tools/apis/regions.js'),
     import('@elastic/schemas/serverless/tools/apis/security-projects.js'),
     import('@elastic/schemas/serverless/tools/apis/traffic-filters.js'),
+    // Hand-authored until @elastic/schemas publishes vectordb-projects (see vectordb-apis.ts)
+    import('./vectordb-apis.ts'),
   ])
 
   _allServerlessApis = [
@@ -41,6 +44,8 @@ export async function loadServerlessApis (): Promise<CloudApiDefinition[]> {
     ...regionsDefinitions,
     ...securityProjectsDefinitions,
     ...trafficFiltersDefinitions,
+    // Hand-authored until @elastic/schemas publishes vectordb-projects (see vectordb-apis.ts)
+    ...vectordbProjectsDefinitions,
   ] as CloudApiDefinition[]
 
   return _allServerlessApis

@@ -58,6 +58,7 @@
     "test": "test"
   },
   "dependencies": {
+    "@clack/prompts": "^1.7.0",
     "@cli-schema/spec": "^0.2.0",
     "@elastic/config-resolver": "0.1.1",
     "@elastic/schemas": "^0.6.2",

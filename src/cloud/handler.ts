@@ -75,7 +75,7 @@ export function createCloudHandler(
   }
 }
 
-const CREATE_PROJECT_RE = /^create-(?:elasticsearch|observability|security)-project$/
+const CREATE_PROJECT_RE = /^create-(?:elasticsearch|observability|security|vectordb)-project$/
 
 export function isCreateProjectCommand (name: string): boolean {
   return CREATE_PROJECT_RE.test(name)

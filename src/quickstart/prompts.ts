@@ -7,10 +7,9 @@
  * Prompt layer: the only module allowed to import `@clack/prompts`.
  *
  * All decoration (prompts, spinners, notes) is drawn on **stderr** so stdout
- * stays pipeable. Ctrl-C anywhere raises {@link PromptCancelled}; the first
- * prompt of the run carries a timeout that raises {@link FirstPromptTimeout}
- * so PTY-allocating agent harnesses fall back to the runbook instead of
- * hanging. Subsequent prompts never time out (a human may read slowly).
+ * stays pipeable. Ctrl-C anywhere raises {@link PromptCancelled}. Prompts
+ * never time out: mode detection (TTY on stdin+stderr) decides interactive
+ * vs agent up front, and a human at a real terminal may read slowly.
  */
 
 import * as clack from '@clack/prompts'
@@ -20,14 +19,6 @@ import { styleText } from 'node:util'
 export class PromptCancelled extends Error {
   constructor () { super('cancelled') }
 }
-
-/** Raised when the first prompt times out (agent-harness safety net). */
-export class FirstPromptTimeout extends Error {
-  constructor () { super('first prompt timed out') }
-}
-
-/** Milliseconds before the first prompt falls back to agent mode. */
-export const FIRST_PROMPT_TIMEOUT_MS = 60_000
 
 export interface SelectOption {
   value: string
@@ -78,34 +69,13 @@ export function _testSetClack (impl: ClackLike | undefined): void {
   _clack = impl ?? clack
 }
 
-/**
- * Creates the production prompter. `firstPromptTimeoutMs` applies to the
- * first prompt only; pass 0 to disable (tests).
- */
-export function createPrompter (firstPromptTimeoutMs: number = FIRST_PROMPT_TIMEOUT_MS): Prompter {
+/** Creates the production prompter (stderr-only decoration). */
+export function createPrompter (): Prompter {
   const output = process.stderr
-  let promptsShown = 0
 
-  function firstPromptSignal (): AbortSignal | undefined {
-    if (promptsShown > 0 || firstPromptTimeoutMs <= 0) return undefined
-    return AbortSignal.timeout(firstPromptTimeoutMs)
-  }
-
-  function unwrap<T> (value: T | symbol, timedOut: () => boolean): T {
-    if (_clack.isCancel(value)) {
-      if (timedOut()) throw new FirstPromptTimeout()
-      throw new PromptCancelled()
-    }
+  function unwrap<T> (value: T | symbol): T {
+    if (_clack.isCancel(value)) throw new PromptCancelled()
     return value as T
-  }
-
-  async function ask<T> (run: (signal: AbortSignal | undefined) => Promise<T | symbol>): Promise<T> {
-    const signal = firstPromptSignal()
-    promptsShown++
-    let timedOut = false
-    signal?.addEventListener('abort', () => { timedOut = true })
-    const value = await run(signal)
-    return unwrap(value, () => timedOut)
   }
 
   return {
@@ -115,12 +85,9 @@ export function createPrompter (firstPromptTimeoutMs: number = FIRST_PROMPT_TIME
     info: (message) => _clack.log.info(message, { output }),
     success: (message) => _clack.log.success(message, { output }),
     warn: (message) => _clack.log.warn(message, { output }),
-    select: (message, options) => ask((signal) =>
-      _clack.select({ message, options, output, ...(signal != null ? { signal } : {}) })),
-    confirm: (message, initial = true) => ask((signal) =>
-      _clack.confirm({ message, initialValue: initial, output, ...(signal != null ? { signal } : {}) })),
-    password: (message) => ask((signal) =>
-      _clack.password({ message, output, ...(signal != null ? { signal } : {}) })),
+    select: async (message, options) => unwrap(await _clack.select({ message, options, output })),
+    confirm: async (message, initial = true) => unwrap(await _clack.confirm({ message, initialValue: initial, output })),
+    password: async (message) => unwrap(await _clack.password({ message, output })),
     spinner: (message) => {
       const s = _clack.spinner({ output })
       s.start(message)

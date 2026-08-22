@@ -51,6 +51,25 @@ Bookshop installer (`src/quickstart/refapp/`, with its deletion contract in the 
 - A fresh project's ES endpoint can serve 410 for ~10–60s after `--wait` returns
   `initialized`; the verify node retries (4 × 10s) before failing.
 
+## Direction changes confirmed by product (2026-08-21)
+
+1. **First-prompt timeout dropped.** TTY detection alone decides the mode; prompts wait
+   indefinitely. (The timeout could only ever fire after provisioning — zero questions
+   before provisioning guarantees the first prompt is post-create — so the fallback
+   runbook risked double-provisioning by the driving agent.)
+2. **No re-run detection**, reaffirmed. Each run creates a new suffixed project.
+3. **API key minted at provision time.** After `--save-as`, quickstart mints an ES API
+   key (`es security create-api-key`, subprocess stdout only — never argv) and rewrites
+   the context's `elasticsearch.auth` to `api_key` via the in-process writer + keychain.
+   The handoff doc never contains the key; agents reference credentials by running
+   commands with `--use-context`. Kibana keeps the basic-auth pair. Mint failure warns
+   and continues on basic auth. Apps should mint their own dedicated keys.
+4. **In-band reference-app installer removed** (its deletion contract executed). The
+   Bookshop app remains as agent-handoff guidance in the context doc and runbook.
+5. **No environment forking.** The paste path defaults to the public prod Cloud API;
+   any other target (QA today, prod at launch) is simply a context whose `cloud.url`
+   points elsewhere — detection picks it up. Cutover is a config value, not code.
+
 ## Product decisions made unilaterally (flag if wrong)
 
 1. **BM25 needs a lexical field**, so the index maps `description` (text) with `copy_to`

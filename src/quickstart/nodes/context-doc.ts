@@ -61,8 +61,9 @@ is running with sample data indexed. Continue building their search application 
 ## What exists now
 
 - **Project**: ${state.projectName ?? ''} (\`${state.projectId ?? ''}\`, region \`${state.regionId ?? ''}\`)
-- **Config context**: \`${ctx}\` — credentials live in the OS keychain, resolved by the \`elastic\` CLI.
-  Run any command with \`elastic --use-context ${ctx} …\` (no keys needed in your environment).
+- **Config context**: \`${ctx}\` — holds the project endpoints and an Elasticsearch API key,
+  stored in the OS keychain and resolved by the \`elastic\` CLI. Run any command with
+  \`elastic --use-context ${ctx} …\`; never copy the key itself out of the config.
 - **Sample index**: \`${index}\` — books with \`${LEXICAL_FIELD}\` (text) copied into \`${SEMANTIC_FIELD}\`
   (\`semantic_text\`). Embeddings are generated at ingest by the default EIS inference endpoint —
   no model setup, and it is multilingual. Only the semantic field was declared; every other field
@@ -96,8 +97,10 @@ Hybrid search combines semantic and keyword matching — see ${LINKS.docsQuickst
 
 1. Try hybrid retrieval (RRF over the two queries above).
 2. Aggregate with ES|QL (e.g. books per decade) — not covered here on purpose.
-3. Point a real application at the project: mint an API key
-   (\`elastic es security create-api-key --use-context ${ctx}\`) and use the endpoints above.
+3. Point a real application at the project: the CLI context already authenticates every
+   \`elastic\` command. For an app's own configuration, mint that app a dedicated key
+   (\`elastic es security create-api-key --name <app> --use-context ${ctx}\`) rather than
+   reusing or extracting this context's key.
 4. Run the Elastic Bookshop reference app against this project: ${LINKS.referenceApp}
    (its .env wants \`ELASTICSEARCH_URL\`, \`ELASTIC_API_KEY\`, optional \`KIBANA_URL\`).
 

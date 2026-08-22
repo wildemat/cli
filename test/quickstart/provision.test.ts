@@ -3,17 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, beforeEach } from 'node:test'
+import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, writeFile, readFile } from 'node:fs/promises'
+import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { parse as parseYaml } from 'yaml'
 import {
   pickDefaultRegion,
   firstFreeName,
   runProvisionNode,
 } from '../../src/quickstart/nodes/provision.ts'
 import { QuickstartHalt } from '../../src/quickstart/types.ts'
+import { _testSetPlatform, _testSetExecSync } from '../../src/config/secret-store.ts'
 import { fakeDeps, fakePrompter, fakeRunCli, ok, fail } from './helpers.ts'
 
 const REGIONS = [
@@ -58,18 +61,57 @@ describe('firstFreeName', () => {
 
 describe('runProvisionNode', () => {
   let configFile: string
+  let restorePlatform: (() => void) | undefined
+  let restoreExec: (() => void) | undefined
 
   beforeEach(async () => {
     const dir = await mkdtemp(join(tmpdir(), 'qs-provision-'))
     configFile = join(dir, 'rc.yml')
     process.env.ELASTIC_CLI_CONFIG_FILE = configFile
+    // Force the no-secret-store path so tests never touch a real OS keychain.
+    restorePlatform = _testSetPlatform('sunos')
+    restoreExec = _testSetExecSync((() => { throw new Error('no secret tool') }) as unknown as Parameters<typeof _testSetExecSync>[0])
   })
 
-  it('creates the project with metadata, --wait, and --save-as', async () => {
+  afterEach(() => {
+    restorePlatform?.()
+    restoreExec?.()
+  })
+
+  /** Routes shared by every test that reaches the post-create mint step. */
+  const mintRoute = { match: 'es security create-api-key', result: ok({ encoded: 'bWludGVkLWtleQ==' }) }
+
+  /**
+   * Simulates --save-as: production create writes the context as a side
+   * effect, so the fake create route seeds the config file the same way.
+   */
+  function seedSavedContextSync (name: string): void {
+    writeFileSync(configFile, [
+      `current_context: ${name}`,
+      'contexts:',
+      `  ${name}:`,
+      '    elasticsearch:',
+      '      url: https://es.example',
+      '      auth:',
+      '        username: admin',
+      '        password: basic-pass',
+      '    kibana:',
+      '      url: https://kb.example',
+      '      auth:',
+      '        username: admin',
+      '        password: basic-pass',
+    ].join('\n') + '\n', 'utf-8')
+  }
+
+  it('creates the project with metadata, --wait, and --save-as, then mints an API key into the context', async () => {
     const runCli = fakeRunCli([
       { match: 'cloud serverless regions list-regions', result: ok(REGIONS) },
       { match: 'cloud serverless projects vector list', result: ok({ items: [] }) },
-      { match: 'cloud serverless projects vector create', result: ok(CREATED) },
+      {
+        match: 'cloud serverless projects vector create',
+        result: () => { seedSavedContextSync('quickstart'); return ok(CREATED) },
+      },
+      mintRoute,
     ])
     const prompter = fakePrompter()
     const result = await runProvisionNode(fakeDeps(prompter, runCli), 'cloud-ctx')
@@ -89,6 +131,40 @@ describe('runProvisionNode', () => {
     assert.ok(createCall.argv.includes('--use-context'))
     // Region irreversibility must be surfaced to the user.
     assert.ok(prompter.log.some((l) => l.includes('cannot be changed later')))
+
+    // The context's ES credential becomes the minted API key (canonical
+    // location; the key itself never goes through argv or the prompter).
+    const mintCall = runCli.calls.find((c) => c.argv.join(' ').startsWith('es security create-api-key'))!
+    assert.ok(mintCall.argv.includes('--use-context'))
+    assert.ok(!mintCall.argv.some((a) => a.includes('bWludGVkLWtleQ==')), 'key must not be in argv')
+    assert.ok(!prompter.log.some((l) => l.includes('bWludGVkLWtleQ==')), 'key must not be echoed')
+    const written = parseYaml(await readFile(configFile, 'utf-8')) as {
+      contexts: Record<string, { elasticsearch: { auth: Record<string, string> }, kibana: { auth: Record<string, string> } }>
+    }
+    assert.deepEqual(written.contexts.quickstart!.elasticsearch.auth, { api_key: 'bWludGVkLWtleQ==' })
+    // Kibana keeps its basic-auth pair — ES API keys are an ES credential.
+    assert.equal(written.contexts.quickstart!.kibana.auth.username, 'admin')
+    assert.ok(prompter.log.some((l) => l.startsWith('success:Minted an Elasticsearch API key')))
+  })
+
+  it('continues with basic auth (warn, not halt) when key minting fails', async () => {
+    const runCli = fakeRunCli([
+      { match: 'cloud serverless regions list-regions', result: ok(REGIONS) },
+      { match: 'cloud serverless projects vector list', result: ok({ items: [] }) },
+      {
+        match: 'cloud serverless projects vector create',
+        result: () => { seedSavedContextSync('quickstart'); return ok(CREATED) },
+      },
+      { match: 'es security create-api-key', result: fail('es_api_error', 'forbidden') },
+    ])
+    const prompter = fakePrompter()
+    const result = await runProvisionNode(fakeDeps(prompter, runCli), 'cloud-ctx')
+    assert.equal(result.projectContextName, 'quickstart')
+    assert.ok(prompter.log.some((l) => l.startsWith('warn:Could not mint an API key')))
+    const written = parseYaml(await readFile(configFile, 'utf-8')) as {
+      contexts: Record<string, { elasticsearch: { auth: Record<string, string> } }>
+    }
+    assert.equal(written.contexts.quickstart!.elasticsearch.auth.password, 'basic-pass')
   })
 
   it('suffixes the name past existing projects', async () => {
@@ -99,6 +175,7 @@ describe('runProvisionNode', () => {
         match: 'cloud serverless projects vector create',
         result: (argv) => ok({ ...CREATED, savedAs: argv[argv.indexOf('--save-as') + 1] }),
       },
+      mintRoute,
     ])
     const result = await runProvisionNode(fakeDeps(fakePrompter(), runCli), 'cloud-ctx')
     assert.equal(result.projectName, 'quickstart-2')
@@ -114,6 +191,7 @@ describe('runProvisionNode', () => {
         result: fail('cloud_api_error', 'Cloud API error 403: {"errors":[{"code":"projects.create_project.forbidden"}]}'),
       },
       { match: 'cloud serverless projects search create', result: ok(CREATED) },
+      mintRoute,
     ])
     const result = await runProvisionNode(
       fakeDeps(fakePrompter({ confirms: [true] }), runCli),
@@ -188,6 +266,7 @@ describe('runProvisionNode', () => {
         match: 'cloud serverless projects vector create',
         result: (argv) => ok({ ...CREATED, savedAs: argv[argv.indexOf('--save-as') + 1] }),
       },
+      mintRoute,
     ])
     const result = await runProvisionNode(fakeDeps(fakePrompter(), runCli), 'cloud-ctx')
     assert.equal(result.projectName, 'quickstart-2')

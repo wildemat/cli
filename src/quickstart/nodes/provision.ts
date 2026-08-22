@@ -17,9 +17,19 @@
  * offered a Search project optimized for vectors instead.
  */
 
-import { readRawConfig, resolveConfigPath } from '../../config/writer.ts'
+import {
+  readRawConfig,
+  writeConfig,
+  upsertContext,
+  hasInlineSecrets,
+  resolveConfigPath,
+  type RawContext,
+} from '../../config/writer.ts'
+import { getSecretStore } from '../../config/secret-store.ts'
 import { DEFAULT_PROJECT_NAME, METADATA_TAGS, REGION_PREFERENCE } from '../constants.ts'
 import { QuickstartHalt, type QuickstartDeps } from '../types.ts'
+
+const KEYCHAIN_SERVICE = 'elastic-cli'
 
 export interface ProvisionResult {
   projectType: 'vectordb' | 'elasticsearch'
@@ -169,6 +179,17 @@ export async function runProvisionNode (
 
   prompter.success(`Connection saved as context "${savedAs}" (credentials in your OS keychain)`)
 
+  // Everything downstream of the handoff (client code, apps, agents) wants an
+  // API key, not the admin basic-auth pair --save-as stores. Mint one and make
+  // it the context's Elasticsearch credential; agents then reference it by
+  // running commands with --use-context, never by handling the raw value.
+  const minted = await mintContextApiKey(deps, savedAs)
+  if (minted) {
+    prompter.success(`Minted an Elasticsearch API key and stored it in context "${savedAs}"`)
+  } else {
+    prompter.warn('Could not mint an API key; the context keeps the project\'s basic-auth credentials (everything still works).')
+  }
+
   return {
     projectType,
     projectId: typeof body.id === 'string' ? body.id : '',
@@ -176,6 +197,50 @@ export async function runProvisionNode (
     regionId: region.id,
     projectContextName: savedAs,
     endpoints,
+  }
+}
+
+/**
+ * Mints an ES API key against the new context (subprocess; the key travels
+ * over the child's stdout pipe, never argv) and rewrites the context's
+ * elasticsearch auth to use it via the in-process writer + secret store.
+ * Returns false on any failure — basic auth remains and the run continues.
+ */
+async function mintContextApiKey (deps: QuickstartDeps, contextName: string): Promise<boolean> {
+  const result = await deps.runCli([
+    'es', 'security', 'create-api-key',
+    '--name', `${contextName}-quickstart`,
+    '--use-context', contextName,
+  ])
+  const keyBody = (result.data ?? {}) as { encoded?: string, api_key?: string }
+  const encoded = keyBody.encoded ?? keyBody.api_key
+  if (!result.ok || encoded == null) return false
+
+  try {
+    const configPath = resolveConfigPath()
+    const config = await readRawConfig(configPath)
+    const existing = config.contexts[contextName]
+    if (existing == null) return false
+
+    const store = await getSecretStore()
+    let keyValue = encoded
+    if (await store.isAvailable()) {
+      const account = `${contextName}:elasticsearch.auth.api_key`
+      await store.put(KEYCHAIN_SERVICE, account, encoded)
+      keyValue = store.resolverExpr(KEYCHAIN_SERVICE, account)
+    }
+
+    const esBlock = existing.elasticsearch
+    if (esBlock == null || typeof esBlock !== 'object') return false
+    const nextContext: RawContext = {
+      ...existing,
+      elasticsearch: { ...(esBlock as Record<string, unknown>), auth: { api_key: keyValue } },
+    }
+    const next = upsertContext(config, contextName, nextContext)
+    await writeConfig(configPath, next, { restrictPermissions: hasInlineSecrets(next) })
+    return true
+  } catch {
+    return false
   }
 }
 

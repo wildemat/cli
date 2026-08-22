@@ -17,7 +17,7 @@ import type { JsonValue, OpaqueCommandHandle, ParsedResult } from '../factory.ts
 import { detectMode } from './mode.ts'
 import { buildRunbook } from './runbook.ts'
 import { runCli } from './executor.ts'
-import { createPrompter, FirstPromptTimeout, PromptCancelled } from './prompts.ts'
+import { createPrompter, PromptCancelled } from './prompts.ts'
 import { openBrowser } from './browser.ts'
 import type { QuickstartDeps, QuickstartState } from './types.ts'
 import { QuickstartHalt } from './types.ts'
@@ -95,11 +95,6 @@ export async function quickstartHandler (parsed: ParsedResult): Promise<JsonValu
     if (err instanceof PromptCancelled) {
       deps.prompter.outro('Cancelled — nothing else was changed. Re-run anytime: elastic quickstart')
       return { kind: 'elastic-quickstart-summary', cancelled: true }
-    }
-    if (err instanceof FirstPromptTimeout) {
-      // PTY-allocating agent harness safety net: emit the runbook instead.
-      deps.prompter.outro('No response at the prompt — assuming an agent is driving. Emitting the runbook.')
-      return buildRunbook()
     }
     if (err instanceof QuickstartHalt) {
       const steps = err.nextSteps.length > 0

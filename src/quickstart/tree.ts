@@ -69,7 +69,11 @@ export function buildFlow (): FlowNode[] {
       kind: 'check',
       title: 'Verify connectivity',
       run: async (state, deps) => {
-        await runVerifyNode(deps, state.projectContextName!)
+        await runVerifyNode(deps, state.projectContextName!, {
+          projectType: state.projectType,
+          projectId: state.projectId,
+          cloudContextName: state.cloudContextName,
+        })
       },
     },
     {

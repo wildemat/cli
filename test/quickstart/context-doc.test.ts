@@ -53,6 +53,17 @@ describe('renderContextDoc', () => {
     assert.match(doc, /search-reference-app/)
   })
 
+  it('renders vector-namespace cleanup with the real cloud context', () => {
+    const doc = renderContextDoc(STATE)
+    assert.match(doc, /projects vector delete --id proj-123 --use-context elastic-cloud/)
+  })
+
+  it('renders search-namespace cleanup for the entitlement-fallback project', () => {
+    const doc = renderContextDoc({ ...STATE, projectType: 'elasticsearch' })
+    assert.match(doc, /projects search delete --id proj-123 --use-context elastic-cloud/)
+    assert.doesNotMatch(doc, /projects vector delete/)
+  })
+
   it('renders placeholders when state is sparse', () => {
     const doc = renderContextDoc({ target: 'cloud-serverless' })
     assert.match(doc, /schema_version: 1/)

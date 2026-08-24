@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { stringify as stringifyYaml } from 'yaml'
 import { LINKS, QUICKSTART_SCHEMA_VERSION, SEMANTIC_FIELD, LEXICAL_FIELD } from '../constants.ts'
-import type { QuickstartState } from '../types.ts'
+import { projectCommandGroup, type QuickstartState } from '../types.ts'
 
 /** Writes the context doc (dir 0700, file 0600) and returns its path. */
 export async function writeContextDoc (state: QuickstartState): Promise<string> {
@@ -52,6 +52,7 @@ export function renderContextDoc (state: QuickstartState): string {
   const ctx = state.projectContextName ?? '<context>'
   const index = state.indexName ?? 'books'
   const demo = state.demoQuery ?? state.comparison?.query ?? 'a story about growing up'
+  const group = projectCommandGroup(state.projectType ?? 'vectordb')
 
   const body = `# Elastic quickstart — handoff context
 
@@ -117,7 +118,7 @@ Hybrid search combines semantic and keyword matching — see ${LINKS.docsQuickst
 
 Serverless projects bill by usage (ingest, retention, search power). This is a trial project and
 disposable: delete it with
-\`elastic cloud serverless projects vector delete --id ${state.projectId ?? '<id>'} --use-context <cloud-context>\`
+\`elastic cloud serverless projects ${group} delete --id ${state.projectId ?? '<id>'} --use-context ${state.cloudContextName ?? '<cloud-context>'}\`
 or from the Cloud console. Billing dimensions: ${LINKS.billing}
 `
 

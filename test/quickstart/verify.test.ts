@@ -68,6 +68,21 @@ describe('runVerifyNode', () => {
     )
   })
 
+  it('renders type-aware reset-credentials remediation from the provision facts', async () => {
+    const runCli = fakeRunCli([{ match: 'status', result: { ok: false, exitCode: 1, stderr: '', error: { code: 'config_error', message: 'no context' } } }])
+    await assert.rejects(
+      runVerifyNode(fakeDeps(fakePrompter(), runCli), 'quickstart', {
+        projectType: 'elasticsearch',
+        projectId: 'proj-9',
+        cloudContextName: 'elastic-cloud',
+      }),
+      (err: unknown) => err instanceof QuickstartHalt &&
+        err.nextSteps.some((s) =>
+          s.includes('projects search reset-credentials --id proj-9') &&
+          s.includes('--use-context elastic-cloud')),
+    )
+  })
+
   it('halts when status reports no services at all', async () => {
     const runCli = fakeRunCli([{ match: 'status', result: { ok: false, exitCode: 1, stderr: '', error: { code: 'config_error', message: 'no context' } } }])
     await assert.rejects(

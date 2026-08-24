@@ -60,7 +60,7 @@ export function buildRunbook (): JsonValue {
           'elastic es security create-api-key --name quickstart-cli --use-context quickstart --json  # then store it in the context: elastic config context edit quickstart --es-api-key <encoded>',
         ],
         on_failure: {
-          '403 projects.create_project.forbidden': 'The org is not entitled to Vector DB projects yet. Create a Search project optimized for vectors instead: elastic cloud serverless projects search create --name quickstart --region-id <region> --optimized-for vector --wait --save-as quickstart --json',
+          '403 projects.create_project.forbidden': `The org is not entitled to Vector DB projects yet. Create a Search project optimized for vectors instead (same metadata tags — the funnel must see this cohort too): elastic cloud serverless projects search create --name quickstart --region-id <region> --optimized-for vector --metadata '${JSON.stringify({ tags: METADATA_TAGS })}' --wait --save-as quickstart --json`,
           fallback_console: CREATE_PROJECT_URL,
         },
       },
@@ -126,6 +126,6 @@ export function buildRunbook (): JsonValue {
       billing: LINKS.billing,
       reference_app: LINKS.referenceApp,
     },
-    cost_awareness: 'Serverless bills by usage. The project is disposable: elastic cloud serverless projects vector delete --id <id> --json',
+    cost_awareness: 'Serverless bills by usage. The project is disposable: elastic cloud serverless projects vector delete --id <id> --json (a Search project created via the 403 fallback lives under `projects search` — use `projects search delete`)',
   } as JsonValue
 }

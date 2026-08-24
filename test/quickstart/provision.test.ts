@@ -201,6 +201,10 @@ describe('runProvisionNode', () => {
     const searchCreate = runCli.calls.find((c) => c.argv.join(' ').startsWith('cloud serverless projects search create'))!
     assert.ok(searchCreate.argv.includes('--optimized-for'))
     assert.ok(searchCreate.argv.includes('vector'))
+    // The fallback is the same journey: funnel metadata, --wait, --save-as.
+    assert.match(searchCreate.argv.join(' '), /--metadata \{"tags":\{"source":"quickstart"/)
+    assert.ok(searchCreate.argv.includes('--wait'))
+    assert.ok(searchCreate.argv.includes('--save-as'))
   })
 
   it('halts when the 403 fallback is declined', async () => {

@@ -15,6 +15,19 @@ import type { Prompter } from './prompts.ts'
 /** Deployment target seam — one value in v1; local lands as a fast follow. */
 export type DeploymentTarget = 'cloud-serverless'
 
+/** Serverless project type created by the provision node. */
+export type ProjectType = 'vectordb' | 'elasticsearch'
+
+/**
+ * CLI command group for a project type (`projects vector …` vs
+ * `projects search …`). Every rendered command that names a project must go
+ * through this — the two types live under different API namespaces, so a
+ * `vector` command can never find a Search project.
+ */
+export function projectCommandGroup (type: ProjectType): 'vector' | 'search' {
+  return type === 'vectordb' ? 'vector' : 'search'
+}
+
 /** Everything a node needs from the outside world, injectable for tests. */
 export interface QuickstartDeps {
   runCli: RunCli
@@ -33,7 +46,7 @@ export interface QuickstartState {
   cloudContextName?: string
   /** Context written by `--save-as` for the new project. */
   projectContextName?: string
-  projectType?: 'vectordb' | 'elasticsearch'
+  projectType?: ProjectType
   projectId?: string
   projectName?: string
   regionId?: string

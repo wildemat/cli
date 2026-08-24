@@ -34,6 +34,8 @@ describe('buildRunbook', () => {
     const onFailure = provision.on_failure!
     const forbidden = onFailure['403 projects.create_project.forbidden']!
     assert.match(forbidden, /--optimized-for vector/)
+    // The fallback cohort must reach the funnel: same metadata tags.
+    assert.match(forbidden, /--metadata '\{"tags":\{"source":"quickstart"/)
     assert.match(onFailure.fallback_console!, /^https:\/\//)
   })
 

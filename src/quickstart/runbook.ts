@@ -18,7 +18,7 @@ import {
   DEMO_QUERY,
   LEXICAL_FIELD,
   LINKS,
-  METADATA_TAGS,
+  METADATA_TAGS_BY_TYPE,
   QUICKSTART_SCHEMA_VERSION,
   SAMPLE_INDEX,
   SEMANTIC_FIELD,
@@ -56,11 +56,11 @@ export function buildRunbook (): JsonValue {
         capability: 'Creates the project, waits for readiness, and saves endpoints + credentials as a reusable context in one command. Then mint an ES API key and keep it in the context — downstream tooling wants API keys, and the config context (OS keychain-backed) is the canonical place for credentials; reference them by running commands with --use-context, never by copying values around.',
         commands: [
           'elastic cloud serverless regions list-regions --json  # pick a region; it is permanent for the project',
-          `elastic cloud serverless projects vector create --name quickstart --region-id <region> --metadata '${JSON.stringify({ tags: METADATA_TAGS })}' --wait --save-as quickstart --json`,
+          `elastic cloud serverless projects vector create --name quickstart --region-id <region> --metadata '${JSON.stringify({ tags: METADATA_TAGS_BY_TYPE.vectordb })}' --wait --save-as quickstart --json`,
           'elastic es security create-api-key --name quickstart-cli --use-context quickstart --json  # then store it in the context: elastic config context edit quickstart --es-api-key <encoded>',
         ],
         on_failure: {
-          '403 projects.create_project.forbidden': `The org is not entitled to Vector DB projects yet. Create a Search project optimized for vectors instead (same metadata tags — the funnel must see this cohort too): elastic cloud serverless projects search create --name quickstart --region-id <region> --optimized-for vector --metadata '${JSON.stringify({ tags: METADATA_TAGS })}' --wait --save-as quickstart --json`,
+          '403 projects.create_project.forbidden': `The org is not entitled to Vector DB projects yet. Create a Search project optimized for vectors instead: elastic cloud serverless projects search create --name quickstart --region-id <region> --optimized-for vector --metadata '${JSON.stringify({ tags: METADATA_TAGS_BY_TYPE.elasticsearch })}' --wait --save-as quickstart --json`,
           fallback_console: CREATE_PROJECT_URL,
         },
       },

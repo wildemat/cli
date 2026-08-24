@@ -26,7 +26,7 @@ import {
 } from '../../config/writer.ts'
 import { resolveConfigPathForWrite } from '../../config/loader.ts'
 import { getSecretStore } from '../../config/secret-store.ts'
-import { DEFAULT_PROJECT_NAME, METADATA_TAGS, REGION_PREFERENCE } from '../constants.ts'
+import { DEFAULT_PROJECT_NAME, METADATA_TAGS_BY_TYPE, REGION_PREFERENCE } from '../constants.ts'
 import { QuickstartHalt, projectCommandGroup, type ProjectType, type QuickstartDeps } from '../types.ts'
 import type { CliResult } from '../executor.ts'
 
@@ -124,7 +124,7 @@ export async function runProvisionNode (
     '--name', name,
     '--region-id', region.id,
     ...(type === 'elasticsearch' ? ['--optimized-for', 'vector'] : []),
-    '--metadata', JSON.stringify({ tags: METADATA_TAGS }),
+    '--metadata', JSON.stringify({ tags: METADATA_TAGS_BY_TYPE[type] }),
     '--wait',
     '--save-as', name,
     '--use-context', cloudContextName,

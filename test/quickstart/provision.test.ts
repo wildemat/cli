@@ -125,7 +125,7 @@ describe('runProvisionNode', () => {
 
     const createCall = runCli.calls.find((c) => c.argv.includes('create'))!
     const joined = createCall.argv.join(' ')
-    assert.match(joined, /--metadata \{"tags":\{"source":"quickstart"/)
+    assert.match(joined, /--metadata \{"tags":\{"source":"quickstart","branch":"cloud-vectordb"\}\}/)
     assert.ok(createCall.argv.includes('--wait'))
     assert.ok(createCall.argv.includes('--save-as'))
     assert.ok(createCall.argv.includes('--use-context'))
@@ -250,7 +250,9 @@ describe('runProvisionNode', () => {
     assert.ok(searchCreate.argv.includes('--optimized-for'))
     assert.ok(searchCreate.argv.includes('vector'))
     // The fallback is the same journey: funnel metadata, --wait, --save-as.
-    assert.match(searchCreate.argv.join(' '), /--metadata \{"tags":\{"source":"quickstart"/)
+    // No branch tag — none is product-specified for the Search fallback.
+    assert.match(searchCreate.argv.join(' '), /--metadata \{"tags":\{"source":"quickstart"\}\}/)
+    assert.doesNotMatch(searchCreate.argv.join(' '), /"branch"/)
     assert.ok(searchCreate.argv.includes('--wait'))
     assert.ok(searchCreate.argv.includes('--save-as'))
   })

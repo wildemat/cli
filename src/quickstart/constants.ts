@@ -11,6 +11,8 @@
  * published vector-search docs quickstart and must be confirmed before GA.
  */
 
+import type { ProjectType } from './types.ts'
+
 /** Version stamp for the agent runbook and context-doc frontmatter. */
 export const QUICKSTART_SCHEMA_VERSION = 1
 
@@ -45,10 +47,14 @@ export const SEMANTIC_FIELD = 'description_semantic'
  */
 export const DEMO_QUERY = 'a story about growing up'
 
-/** Tags attached to the created project via --metadata (server-side funnel). */
-export const METADATA_TAGS: Record<string, string> = {
-  source: 'quickstart',
-  branch: 'cloud-vectordb',
+/**
+ * Tags attached to created projects via --metadata (server-side funnel).
+ * The Vector DB branch tag is product-specified; no branch value has been
+ * specified for the Search fallback, so it carries source only.
+ */
+export const METADATA_TAGS_BY_TYPE: Record<ProjectType, Record<string, string>> = {
+  vectordb: { source: 'quickstart', branch: 'cloud-vectordb' },
+  elasticsearch: { source: 'quickstart' },
 }
 
 /** Region preference when defaulting (the user is shown the choice, never asked). */

@@ -111,6 +111,31 @@ describe('runAuthNode — paste flow', () => {
     assert.equal(written.contexts['elastic-cloud']!.cloud.auth.api_key, 'fresh-key')
   })
 
+  it('preserves other service blocks when re-authing an existing elastic-cloud context', async () => {
+    await writeFile(configFile, [
+      'current_context: elastic-cloud',
+      'contexts:',
+      '  elastic-cloud:',
+      '    cloud:',
+      '      url: https://cloud.example',
+      '      auth:',
+      '        api_key: expired-key',
+      '    elasticsearch:',
+      '      url: https://es.example',
+    ].join('\n'), 'utf-8')
+    await chmod(configFile, 0o600)
+
+    const result = await runAuthNode(authDeps({ passwords: ['fresh-key'] }, 'fresh-key'))
+    assert.equal(result.cloudContextName, 'elastic-cloud')
+    assert.equal(result.reused, false)
+
+    const written = parseYaml(await readFile(configFile, 'utf-8')) as {
+      contexts: Record<string, { cloud: { auth: { api_key: string } }, elasticsearch?: { url: string } }>
+    }
+    assert.equal(written.contexts['elastic-cloud']!.cloud.auth.api_key, 'fresh-key')
+    assert.equal(written.contexts['elastic-cloud']!.elasticsearch?.url, 'https://es.example')
+  })
+
   it('retries once after a bad key', async () => {
     const prompter = fakePrompter({ passwords: ['bad-key', 'fresh-key'] })
     const deps = fakeDeps(prompter, fakeRunCli([]), { fetchFn: fetchForKey('fresh-key') })

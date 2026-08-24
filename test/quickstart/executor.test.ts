@@ -98,13 +98,31 @@ describe('quickstart executor', () => {
     ])
   })
 
-  it('rejects when the child cannot be spawned', async () => {
-    _testSetSpawn((() => fakeChild({ emitError: 'ENOENT' })) as unknown as Parameters<typeof _testSetSpawn>[0])
-    await assert.rejects(runCli(['x']), /failed to spawn/)
+  it('synthesizes a message for transport-error envelopes that carry status_code and body', async () => {
+    _testSetSpawn((() => fakeChild({
+      stderr: '{"error":{"code":"transport_error","status_code":400,"body":{"error":{"type":"resource_already_exists_exception"}}}}\n',
+      exitCode: 1,
+    })) as unknown as Parameters<typeof _testSetSpawn>[0])
+    const result = await runCli(['es', 'indices', 'create'])
+    assert.equal(result.ok, false)
+    assert.equal(result.error?.code, 'transport_error')
+    assert.equal(result.error?.status, 400)
+    assert.match(result.error!.message, /resource_already_exists_exception/)
   })
 
-  it('kills and rejects on timeout', async () => {
+  it('returns a spawn_error result when the child cannot be spawned', async () => {
+    _testSetSpawn((() => fakeChild({ emitError: 'ENOENT' })) as unknown as Parameters<typeof _testSetSpawn>[0])
+    const result = await runCli(['x'])
+    assert.equal(result.ok, false)
+    assert.equal(result.error?.code, 'spawn_error')
+    assert.match(result.error!.message, /failed to spawn/)
+  })
+
+  it('kills the child and returns a timeout result', async () => {
     _testSetSpawn((() => fakeChild({ neverExit: true })) as unknown as Parameters<typeof _testSetSpawn>[0])
-    await assert.rejects(runCli(['x'], { timeoutMs: 20 }), /timed out/)
+    const result = await runCli(['x'], { timeoutMs: 20 })
+    assert.equal(result.ok, false)
+    assert.equal(result.error?.code, 'timeout')
+    assert.match(result.error!.message, /timed out/)
   })
 })

@@ -31,7 +31,7 @@ import { extname, join } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { ContextSchema, CommandPolicySchema, StructuralConfigSchema } from './schema.ts'
 import { resolveExpressions } from '@elastic/config-resolver'
-import { hasInlineSecrets, type RawConfig } from './writer.ts'
+import { hasInlineSecrets, resolveConfigPath, type RawConfig } from './writer.ts'
 import type { ConfigFile, ResolvedConfig, ResolvedContext } from './types.ts'
 import { BUILT_IN_PROFILES, type BuiltInProfile } from './profiles.ts'
 
@@ -74,6 +74,23 @@ export async function discoverConfigFile (dir?: string): Promise<string | null> 
     } catch { continue }
   }
   return null
+}
+
+/**
+ * Resolves the path config writes must target so discovery-based reads see
+ * them: the explicit `--config-file` value, else the env override, else
+ * whatever file discovery already finds, else the default `~/.elasticrc.yml`.
+ * Writing to the bare default while an `.elasticrc`/`.elasticrc.yaml` variant
+ * exists would shadow the write for every subsequent read.
+ *
+ * @param explicit - `--config-file` flag value, when given.
+ * @param dir - Directory searched during discovery (tests); defaults to home.
+ */
+export async function resolveConfigPathForWrite (explicit?: string, dir?: string): Promise<string> {
+  if (typeof explicit === 'string' && explicit.length > 0) return explicit
+  const env = process.env[ENV_CONFIG_FILE]
+  if (typeof env === 'string' && env.length > 0) return env
+  return await discoverConfigFile(dir) ?? resolveConfigPath()
 }
 
 /**

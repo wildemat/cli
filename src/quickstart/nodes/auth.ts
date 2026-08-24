@@ -16,14 +16,13 @@
  * exactly this module later, so no auth assumptions may leak into other nodes.
  */
 
-import { loadConfig } from '../../config/loader.ts'
+import { loadConfig, resolveConfigPathForWrite } from '../../config/loader.ts'
 import { checkCloud } from '../../status/checks.ts'
 import {
   readRawConfig,
   writeConfig,
   upsertContext,
   hasInlineSecrets,
-  resolveConfigPath,
 } from '../../config/writer.ts'
 import { getSecretStore } from '../../config/secret-store.ts'
 import { CLOUD_API_URL, SIGNUP_URL, API_KEYS_URL } from '../constants.ts'
@@ -99,7 +98,7 @@ async function detectExistingCloudContext (deps: QuickstartDeps): Promise<string
 
   // Other contexts with a cloud block; raw scan only — secrets resolve per-context below.
   try {
-    const raw = await readRawConfig(resolveConfigPath())
+    const raw = await readRawConfig(await resolveConfigPathForWrite())
     for (const [name, ctx] of Object.entries(raw.contexts)) {
       if (name === activeName) continue
       if (ctx != null && typeof ctx === 'object' && (ctx as Record<string, unknown>).cloud != null) {
@@ -130,7 +129,7 @@ async function detectExistingCloudContext (deps: QuickstartDeps): Promise<string
  */
 async function persistCloudKey (apiKey: string): Promise<string> {
   const contextName = DEFAULT_CLOUD_CONTEXT
-  const configPath = resolveConfigPath()
+  const configPath = await resolveConfigPathForWrite()
   const config = await readRawConfig(configPath)
 
   const store = await getSecretStore()
@@ -144,7 +143,10 @@ async function persistCloudKey (apiKey: string): Promise<string> {
     keyValue = apiKey
   }
 
+  // Merge, not replace: a context of the same name may carry elasticsearch/
+  // kibana blocks (and keychain references) that must survive a re-auth.
   let next = upsertContext(config, contextName, {
+    ...config.contexts[contextName],
     cloud: { url: CLOUD_API_URL, auth: { api_key: keyValue } },
   })
   if (next.current_context === '') {

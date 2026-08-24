@@ -22,9 +22,9 @@ import {
   writeConfig,
   upsertContext,
   hasInlineSecrets,
-  resolveConfigPath,
   type RawContext,
 } from '../../config/writer.ts'
+import { resolveConfigPathForWrite } from '../../config/loader.ts'
 import { getSecretStore } from '../../config/secret-store.ts'
 import { DEFAULT_PROJECT_NAME, METADATA_TAGS, REGION_PREFERENCE } from '../constants.ts'
 import { QuickstartHalt, type QuickstartDeps } from '../types.ts'
@@ -76,6 +76,18 @@ export async function runProvisionNode (
   const regionsResult = await runCli(
     ['cloud', 'serverless', 'regions', 'list-regions', '--use-context', cloudContextName],
   )
+  if (!regionsResult.ok) {
+    const detail = regionsResult.error?.message ??
+      (regionsResult.stderr.trim() || `exit code ${regionsResult.exitCode}`)
+    throw new QuickstartHalt(
+      'regions_failed',
+      `Could not list serverless regions: ${detail}`,
+      [
+        'Check connectivity and credentials: elastic status',
+        `Re-list: elastic cloud serverless regions list-regions --use-context ${cloudContextName}`,
+      ],
+    )
+  }
   const regions = Array.isArray(regionsResult.data) ? regionsResult.data as unknown as Region[] : []
   const region = pickDefaultRegion(regions)
   if (region == null) {
@@ -97,7 +109,7 @@ export async function runProvisionNode (
   for (const item of items ?? []) {
     if (typeof item.name === 'string') taken.add(item.name)
   }
-  const rawConfig = await readRawConfig(resolveConfigPath())
+  const rawConfig = await readRawConfig(await resolveConfigPathForWrite())
   for (const ctxName of Object.keys(rawConfig.contexts)) taken.add(ctxName)
   const name = firstFreeName(taken)
 
@@ -217,7 +229,7 @@ async function mintContextApiKey (deps: QuickstartDeps, contextName: string): Pr
   if (!result.ok || encoded == null) return false
 
   try {
-    const configPath = resolveConfigPath()
+    const configPath = await resolveConfigPathForWrite()
     const config = await readRawConfig(configPath)
     const existing = config.contexts[contextName]
     if (existing == null) return false

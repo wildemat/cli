@@ -30,7 +30,7 @@ export interface CliResult {
   /** parsed stdout JSON, when stdout contained valid JSON */
   data?: JsonValue
   /** structured error envelope parsed from stderr, when present */
-  error?: { code: string, message: string }
+  error?: { code: string, message: string, status?: number }
   /** raw stderr, for diagnostics when no envelope was found */
   stderr: string
 }
@@ -65,7 +65,7 @@ export function selfExecArgv (): { command: string, prefix: string[] } {
   }
 }
 
-function extractErrorEnvelope (stderr: string): { code: string, message: string } | undefined {
+function extractErrorEnvelope (stderr: string): CliResult['error'] | undefined {
   // The factory writes the envelope as a single JSON line on stderr; scan from
   // the end so trailing warnings printed earlier do not shadow it.
   const lines = stderr.split('\n').filter((l) => l.trim().length > 0)
@@ -73,10 +73,19 @@ function extractErrorEnvelope (stderr: string): { code: string, message: string 
     const line = lines[i]!.trim()
     if (!line.startsWith('{')) continue
     try {
-      const parsed = JSON.parse(line) as { error?: { code?: unknown, message?: unknown } }
-      if (parsed.error != null && typeof parsed.error.code === 'string' && typeof parsed.error.message === 'string') {
-        return { code: parsed.error.code, message: parsed.error.message }
+      const parsed = JSON.parse(line) as {
+        error?: { code?: unknown, message?: unknown, status_code?: unknown, body?: unknown }
       }
+      const err = parsed.error
+      if (err == null || typeof err.code !== 'string') continue
+      const status = typeof err.status_code === 'number' ? err.status_code : undefined
+      // ES transport errors carry status_code + body instead of message.
+      const message = typeof err.message === 'string'
+        ? err.message
+        : err.body != null
+          ? `${status != null ? `status ${status}: ` : ''}${JSON.stringify(err.body)}`
+          : status != null ? `status ${status}` : err.code
+      return { code: err.code, message, ...(status != null ? { status } : {}) }
     } catch {
       // not JSON; keep scanning
     }
@@ -84,12 +93,17 @@ function extractErrorEnvelope (stderr: string): { code: string, message: string 
   return undefined
 }
 
+const SIGKILL_GRACE_MS = 5_000
+
 /**
  * Runs `elastic <argv> --json` as a subprocess and returns the parsed result.
  *
  * stdout is parsed as JSON when possible (success payloads); stderr is
  * scanned for the `{"error":{...}}` envelope on failure. Both are returned
  * so callers can render diagnostics.
+ *
+ * Never rejects: timeouts and spawn failures come back as a CliResult whose
+ * error.code is `timeout` / `spawn_error`, so callers have one failure path.
  */
 export async function runCli (argv: string[], opts: RunCliOptions = {}): Promise<CliResult> {
   const { command, prefix } = selfExecArgv()
@@ -119,22 +133,37 @@ export async function runCli (argv: string[], opts: RunCliOptions = {}): Promise
   })
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
-  const exitCode = await new Promise<number>((resolve, reject) => {
+  const outcome = await new Promise<{ exitCode: number, error?: CliResult['error'] }>((resolve) => {
     const timer = setTimeout(() => {
+      // Resolve immediately with the output collected so far; escalate to
+      // SIGKILL (unref'd, so it never holds the event loop) if SIGTERM is
+      // ignored. A late 'close' resolves again, which is a no-op.
       child.kill('SIGTERM')
-      reject(new Error(`elastic ${argv.join(' ')} timed out after ${Math.round(timeoutMs / 1000)}s`))
+      setTimeout(() => { child.kill('SIGKILL') }, SIGKILL_GRACE_MS).unref()
+      resolve({
+        exitCode: 1,
+        error: { code: 'timeout', message: `elastic ${argv.join(' ')} timed out after ${Math.round(timeoutMs / 1000)}s` },
+      })
     }, timeoutMs)
     child.on('error', (err) => {
       clearTimeout(timer)
-      reject(new Error(`failed to spawn elastic ${argv.join(' ')}: ${err.message}`))
+      resolve({
+        exitCode: 1,
+        error: { code: 'spawn_error', message: `failed to spawn elastic ${argv.join(' ')}: ${err.message}` },
+      })
     })
     child.on('close', (code) => {
       clearTimeout(timer)
-      resolve(code ?? 1)
+      resolve({ exitCode: code ?? 1 })
     })
   })
 
-  const result: CliResult = { ok: exitCode === 0, exitCode, stderr }
+  const result: CliResult = {
+    ok: outcome.exitCode === 0 && outcome.error == null,
+    exitCode: outcome.exitCode,
+    stderr,
+  }
+  if (outcome.error != null) result.error = outcome.error
 
   const trimmed = stdout.trim()
   if (trimmed.length > 0) {
@@ -144,7 +173,7 @@ export async function runCli (argv: string[], opts: RunCliOptions = {}): Promise
       // non-JSON stdout; leave data unset
     }
   }
-  if (exitCode !== 0) {
+  if (!result.ok && result.error == null) {
     const envelope = extractErrorEnvelope(stderr)
     if (envelope != null) result.error = envelope
   }

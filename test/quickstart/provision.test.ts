@@ -235,6 +235,18 @@ describe('runProvisionNode', () => {
     )
   })
 
+  it('surfaces the regions listing failure instead of claiming no region exists', async () => {
+    const runCli = fakeRunCli([
+      { match: 'cloud serverless regions list-regions', result: fail('cloud_api_error', 'Cloud API error 401: unauthorized') },
+    ])
+    await assert.rejects(
+      runProvisionNode(fakeDeps(fakePrompter(), runCli), 'cloud-ctx'),
+      (err: unknown) => err instanceof QuickstartHalt &&
+        err.code === 'regions_failed' &&
+        err.message.includes('401'),
+    )
+  })
+
   it('halts when no creatable region exists', async () => {
     const runCli = fakeRunCli([
       { match: 'cloud serverless regions list-regions', result: ok([]) },

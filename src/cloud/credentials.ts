@@ -25,10 +25,10 @@ import {
   writeConfig,
   upsertContext,
   hasInlineSecrets,
-  resolveConfigPath,
   type RawConfig,
   type RawContext,
 } from '../config/writer.ts'
+import { resolveConfigPathForWrite } from '../config/loader.ts'
 import { getSecretStore, type SecretStore } from '../config/secret-store.ts'
 import type { JsonValue } from '../factory.ts'
 
@@ -308,7 +308,7 @@ async function saveAsContext (
   warnings: string[],
 ): Promise<ApplyCredentialPolicyResult> {
   const contextName = opts.saveAs!
-  const configPath = resolveConfigPath(opts.configFile)
+  const configPath = await resolveConfigPathForWrite(opts.configFile)
   const config = await readRawConfig(configPath)
 
   let nextContext: RawContext | undefined

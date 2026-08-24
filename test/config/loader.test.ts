@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { chmod, mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadConfigFile, discoverConfigFile, resolveContext, resolveEffectiveCommands, loadConfig, clearConfigCache, _testResetLooseInlineSecretWarning } from '../../src/config/loader.ts'
+import { loadConfigFile, discoverConfigFile, resolveConfigPathForWrite, resolveContext, resolveEffectiveCommands, loadConfig, clearConfigCache, _testResetLooseInlineSecretWarning } from '../../src/config/loader.ts'
 import type { ConfigFile, ResolvedConfig } from '../../src/config/types.ts'
 
 afterEach(() => clearConfigCache())
@@ -104,6 +104,29 @@ describe('discoverConfigFile', () => {
     const found = await discoverConfigFile(emptyDir)
     assert.equal(found, null)
     await rm(emptyDir, { recursive: true })
+  })
+
+  it('resolveConfigPathForWrite targets the discovered variant, not the bare default', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'elastic-cli-write-'))
+    const savedEnv = process.env.ELASTIC_CLI_CONFIG_FILE
+    delete process.env.ELASTIC_CLI_CONFIG_FILE
+    try {
+      // A .elasticrc.yaml exists: writes must go there or reads will shadow them.
+      await writeFile(join(dir, '.elasticrc.yaml'), VALID_CONFIG_YAML)
+      assert.equal(await resolveConfigPathForWrite(undefined, dir), join(dir, '.elasticrc.yaml'))
+      // No config anywhere: fall back to the default ~/.elasticrc.yml.
+      const emptyDir = await mkdtemp(join(tmpdir(), 'elastic-cli-write-empty-'))
+      assert.ok((await resolveConfigPathForWrite(undefined, emptyDir)).endsWith('.elasticrc.yml'))
+      await rm(emptyDir, { recursive: true })
+      // Explicit flag and env override win, in that order.
+      process.env.ELASTIC_CLI_CONFIG_FILE = '/env/rc.yml'
+      assert.equal(await resolveConfigPathForWrite(undefined, dir), '/env/rc.yml')
+      assert.equal(await resolveConfigPathForWrite('/flag/rc.yml', dir), '/flag/rc.yml')
+    } finally {
+      if (savedEnv == null) delete process.env.ELASTIC_CLI_CONFIG_FILE
+      else process.env.ELASTIC_CLI_CONFIG_FILE = savedEnv
+      await rm(dir, { recursive: true })
+    }
   })
 
   it('does NOT discover config in parent directories (security regression)', async () => {

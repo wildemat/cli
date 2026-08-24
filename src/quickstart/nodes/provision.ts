@@ -26,7 +26,7 @@ import {
 } from '../../config/writer.ts'
 import { resolveConfigPathForWrite } from '../../config/loader.ts'
 import { getSecretStore } from '../../config/secret-store.ts'
-import { DEFAULT_PROJECT_NAME, METADATA_TAGS_BY_TYPE, REGION_PREFERENCE } from '../constants.ts'
+import { CLOUD_PROJECTS_URL, DEFAULT_PROJECT_NAME, METADATA_TAGS_BY_TYPE, REGION_PREFERENCE } from '../constants.ts'
 import { QuickstartHalt, projectCommandGroup, type ProjectType, type QuickstartDeps } from '../types.ts'
 import type { CliResult } from '../executor.ts'
 
@@ -144,6 +144,8 @@ export async function runProvisionNode (
       spin.stop(`${label} project "${name}" is ready.`)
     } else if (type === 'vectordb' && isEntitlementError(result.error?.message)) {
       spin.fail('This organization cannot create Vector DB projects yet.')
+    } else if (result.error?.code === 'wait_timeout') {
+      spin.fail(`${label} project "${name}" was created, but did not finish initializing in time.`)
     } else {
       spin.fail('Project creation failed.')
     }
@@ -169,6 +171,21 @@ export async function runProvisionNode (
 
   const group = projectCommandGroup(projectType)
   if (!created.ok) {
+    // --wait timed out: the project exists, but its one-time credentials were
+    // never captured and no context was saved. Re-running the create would
+    // bill a second project — send the user to the console instead.
+    if (created.error?.code === 'wait_timeout') {
+      throw new QuickstartHalt(
+        'provision_wait_timeout',
+        `The project "${name}" was created, but did not finish initializing in time.`,
+        [
+          `Find it in the Elastic Cloud console: ${CLOUD_PROJECTS_URL}`,
+          'When it is ready, create an Elasticsearch API key from the project page',
+          `Paste it into a context: elastic config context add ${name} --es-url <endpoint from the console> --es-api-key <key>`,
+          `Check it works: elastic status --use-context ${name}`,
+        ],
+      )
+    }
     // The project may exist even though saving the context failed (e.g. the
     // OS keychain refused the write). Don't let a re-run create a duplicate.
     if (created.error?.code === 'credential_policy_error') {

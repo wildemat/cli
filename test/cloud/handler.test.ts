@@ -216,7 +216,7 @@ describe('--wait polling (#91)', () => {
     assert.equal(pollCount, 0, 'should not poll without --wait')
   })
 
-  it('returns cloud_api_error on poll timeout', async () => {
+  it('returns a distinct wait_timeout envelope naming the project on poll timeout', async () => {
     const client = {
       baseUrl: 'https://api.elastic-cloud.com',
       request: async (params: CloudRequestParams) => {
@@ -233,8 +233,10 @@ describe('--wait polling (#91)', () => {
       pollTimeoutMs: 50,
     })
 
-    const result = await handler(parsed(undefined, { wait: true })) as { error: { message: string } }
+    const result = await handler(parsed(undefined, { wait: true })) as { error: { code: string, message: string } }
+    assert.equal(result.error.code, 'wait_timeout')
     assert.ok(result.error.message.includes('Timed out'))
+    assert.ok(result.error.message.includes('proj-123'))
   })
 })
 

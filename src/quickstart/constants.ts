@@ -31,6 +31,9 @@ export const API_KEYS_URL = 'https://cloud.elastic.co/account/keys'
 /** One-click console fallback for creating the project manually. */
 export const CREATE_PROJECT_URL = 'https://cloud.elastic.co/projects/create/elasticsearch?use_case=vector_search'
 
+/** Console home for serverless projects (find/manage an existing project). */
+export const CLOUD_PROJECTS_URL = 'https://cloud.elastic.co/projects'
+
 /** Sample index name — matches the docs quickstart's books dataset. */
 export const SAMPLE_INDEX = 'books'
 

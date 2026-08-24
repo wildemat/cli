@@ -323,6 +323,28 @@ describe('runProvisionNode', () => {
     )
   })
 
+  it('halts with console guidance when --wait times out — never a second create', async () => {
+    const runCli = fakeRunCli([
+      { match: 'cloud serverless regions list-regions', result: ok(REGIONS) },
+      { match: 'cloud serverless projects vector list', result: ok({ items: [] }) },
+      {
+        match: 'cloud serverless projects vector create',
+        result: fail('wait_timeout', 'Timed out waiting for project proj-1 to reach "initialized" phase'),
+      },
+    ])
+    const prompter = fakePrompter()
+    await assert.rejects(
+      runProvisionNode(fakeDeps(prompter, runCli), 'cloud-ctx'),
+      (err: unknown) => err instanceof QuickstartHalt &&
+        err.code === 'provision_wait_timeout' &&
+        err.message.includes('was created') &&
+        err.nextSteps.some((s) => s.includes('https://cloud.elastic.co/projects')) &&
+        err.nextSteps.some((s) => s.includes('config context add quickstart --es-url')) &&
+        !err.nextSteps.some((s) => s.includes('create --name')),
+    )
+    assert.ok(prompter.log.some((l) => l.startsWith('spinner-fail:') && l.includes('did not finish initializing')))
+  })
+
   it('halts with reset-credentials guidance when the context save fails', async () => {
     const runCli = fakeRunCli([
       { match: 'cloud serverless regions list-regions', result: ok(REGIONS) },

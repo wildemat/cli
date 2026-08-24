@@ -63,13 +63,18 @@ export function createCloudHandler(
         const id = (body as Record<string, unknown>)?.id as string | undefined
         if (id != null) {
           const statusPath = `${def.path}/${id}/status`
-          await pollProjectStatus(client, statusPath, deps)
+          await pollProjectStatus(client, statusPath, deps, id)
           process.stderr.write(`Project ${id} is ready.\n`)
         }
       }
 
       return body as JsonValue
     } catch (err) {
+      // A wait timeout is not a failed create: the project exists but is not
+      // ready. The distinct code lets callers avoid retrying the create.
+      if (err instanceof WaitTimeoutError) {
+        return { error: { code: 'wait_timeout', message: err.message } }
+      }
       return cloudApiError(err)
     }
   }
@@ -81,10 +86,13 @@ export function isCreateProjectCommand (name: string): boolean {
   return CREATE_PROJECT_RE.test(name)
 }
 
+class WaitTimeoutError extends Error {}
+
 async function pollProjectStatus (
   client: CloudClient,
   statusPath: string,
-  deps: CloudHandlerDeps
+  deps: CloudHandlerDeps,
+  projectId: string
 ): Promise<void> {
   const interval = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
   const timeout = deps.pollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS
@@ -100,7 +108,7 @@ async function pollProjectStatus (
       process.stderr.write('Waiting for project... (status check failed, retrying)\n')
     }
   }
-  throw new Error('Timed out waiting for project to reach "initialized" phase')
+  throw new WaitTimeoutError(`Timed out waiting for project ${projectId} to reach "initialized" phase`)
 }
 
 function sleep (ms: number): Promise<void> {

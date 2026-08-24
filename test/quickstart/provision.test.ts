@@ -144,10 +144,11 @@ describe('runProvisionNode', () => {
     assert.deepEqual(written.contexts.quickstart!.elasticsearch.auth, { api_key: 'bWludGVkLWtleQ==' })
     // Kibana keeps its basic-auth pair — ES API keys are an ES credential.
     assert.equal(written.contexts.quickstart!.kibana.auth.username, 'admin')
-    assert.ok(prompter.log.some((l) => l.startsWith('success:Minted an Elasticsearch API key')))
+    assert.equal(result.esApiKeyMinted, true)
+    assert.ok(prompter.log.some((l) => l.startsWith('spinner-stop:Minted an Elasticsearch API key')))
   })
 
-  it('continues with basic auth (warn, not halt) when key minting fails', async () => {
+  it('continues with basic auth (warn, not halt) when key minting fails terminally', async () => {
     const runCli = fakeRunCli([
       { match: 'cloud serverless regions list-regions', result: ok(REGIONS) },
       { match: 'cloud serverless projects vector list', result: ok({ items: [] }) },
@@ -160,11 +161,58 @@ describe('runProvisionNode', () => {
     const prompter = fakePrompter()
     const result = await runProvisionNode(fakeDeps(prompter, runCli), 'cloud-ctx')
     assert.equal(result.projectContextName, 'quickstart')
-    assert.ok(prompter.log.some((l) => l.startsWith('warn:Could not mint an API key')))
+    assert.equal(result.esApiKeyMinted, false)
+    // Terminal (non-retryable) failure: exactly one mint attempt.
+    assert.equal(runCli.calls.filter((c) => c.argv.join(' ').startsWith('es security create-api-key')).length, 1)
+    assert.ok(prompter.log.some((l) => l.startsWith('spinner-fail:Could not mint an API key')))
     const written = parseYaml(await readFile(configFile, 'utf-8')) as {
       contexts: Record<string, { elasticsearch: { auth: Record<string, string> } }>
     }
     assert.equal(written.contexts.quickstart!.elasticsearch.auth.password, 'basic-pass')
+  })
+
+  it('holds and retries minting while the fresh project refuses connections', async () => {
+    let mintCalls = 0
+    const runCli = fakeRunCli([
+      { match: 'cloud serverless regions list-regions', result: ok(REGIONS) },
+      { match: 'cloud serverless projects vector list', result: ok({ items: [] }) },
+      {
+        match: 'cloud serverless projects vector create',
+        result: () => { seedSavedContextSync('quickstart'); return ok(CREATED) },
+      },
+      {
+        match: 'es security create-api-key',
+        result: () => {
+          mintCalls++
+          if (mintCalls < 3) return fail('connection_error', 'fetch failed: ECONNREFUSED')
+          return ok({ encoded: 'bWludGVkLWtleQ==' })
+        },
+      },
+    ])
+    const prompter = fakePrompter()
+    const result = await runProvisionNode(fakeDeps(prompter, runCli), 'cloud-ctx')
+    assert.equal(mintCalls, 3)
+    assert.equal(result.esApiKeyMinted, true)
+    assert.ok(prompter.log.some((l) => l.startsWith('spinner-message:Minting an Elasticsearch API key… project not accepting requests yet')))
+  })
+
+  it('gives up minting after the attempt budget', async () => {
+    let mintCalls = 0
+    const runCli = fakeRunCli([
+      { match: 'cloud serverless regions list-regions', result: ok(REGIONS) },
+      { match: 'cloud serverless projects vector list', result: ok({ items: [] }) },
+      {
+        match: 'cloud serverless projects vector create',
+        result: () => { seedSavedContextSync('quickstart'); return ok(CREATED) },
+      },
+      {
+        match: 'es security create-api-key',
+        result: () => { mintCalls++; return fail('connection_error', 'fetch failed') },
+      },
+    ])
+    const result = await runProvisionNode(fakeDeps(fakePrompter(), runCli), 'cloud-ctx')
+    assert.equal(mintCalls, 6)
+    assert.equal(result.esApiKeyMinted, false)
   })
 
   it('suffixes the name past existing projects', async () => {

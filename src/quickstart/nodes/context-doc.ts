@@ -62,9 +62,11 @@ is running with sample data indexed. Continue building their search application 
 ## What exists now
 
 - **Project**: ${state.projectName ?? ''} (\`${state.projectId ?? ''}\`, region \`${state.regionId ?? ''}\`)
-- **Config context**: \`${ctx}\` — holds the project endpoints and an Elasticsearch API key,
+- **Config context**: \`${ctx}\` — holds the project endpoints and ${state.esApiKeyMinted === true
+    ? 'an Elasticsearch API key'
+    : 'its credentials'},
   stored in the OS keychain and resolved by the \`elastic\` CLI. Run any command with
-  \`elastic --use-context ${ctx} …\`; never copy the key itself out of the config.
+  \`elastic --use-context ${ctx} …\`; never copy the credentials out of the config.
 - **Sample index**: \`${index}\` — books with \`${LEXICAL_FIELD}\` (text) copied into \`${SEMANTIC_FIELD}\`
   (\`semantic_text\`). Embeddings are generated at ingest by the default EIS inference endpoint —
   no model setup, and it is multilingual. Only the semantic field was declared; every other field

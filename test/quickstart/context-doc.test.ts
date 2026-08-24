@@ -53,6 +53,15 @@ describe('renderContextDoc', () => {
     assert.match(doc, /search-reference-app/)
   })
 
+  it('claims an API key only when one was actually minted', () => {
+    const minted = renderContextDoc({ ...STATE, esApiKeyMinted: true })
+    assert.match(minted, /holds the project endpoints and an Elasticsearch API key/)
+    // Mint failed or unknown: the doc must not promise a key that isn't there.
+    const notMinted = renderContextDoc({ ...STATE, esApiKeyMinted: false })
+    assert.match(notMinted, /holds the project endpoints and its credentials/)
+    assert.doesNotMatch(renderContextDoc(STATE), /an Elasticsearch API key/)
+  })
+
   it('renders vector-namespace cleanup with the real cloud context', () => {
     const doc = renderContextDoc(STATE)
     assert.match(doc, /projects vector delete --id proj-123 --use-context elastic-cloud/)

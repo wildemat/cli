@@ -62,6 +62,7 @@ export function buildFlow (): FlowNode[] {
         state.regionId = result.regionId
         state.projectContextName = result.projectContextName
         state.endpoints = result.endpoints
+        state.esApiKeyMinted = result.esApiKeyMinted
       },
     },
     {

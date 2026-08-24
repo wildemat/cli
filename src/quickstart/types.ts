@@ -51,6 +51,8 @@ export interface QuickstartState {
   projectName?: string
   regionId?: string
   endpoints?: { elasticsearch?: string, kibana?: string }
+  /** True when the provision node replaced basic auth with a minted ES API key. */
+  esApiKeyMinted?: boolean
   indexName?: string
   docsIndexed?: number
   demoQuery?: string

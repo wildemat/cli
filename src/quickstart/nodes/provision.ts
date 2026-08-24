@@ -40,6 +40,8 @@ export interface ProvisionResult {
   /** Context written by --save-as; later nodes run against it. */
   projectContextName: string
   endpoints: { elasticsearch?: string, kibana?: string }
+  /** False when the context kept the admin basic-auth pair instead. */
+  esApiKeyMinted: boolean
 }
 
 interface Region {
@@ -199,12 +201,7 @@ export async function runProvisionNode (
   // API key, not the admin basic-auth pair --save-as stores. Mint one and make
   // it the context's Elasticsearch credential; agents then reference it by
   // running commands with --use-context, never by handling the raw value.
-  const minted = await mintContextApiKey(deps, savedAs)
-  if (minted) {
-    prompter.success(`Minted an Elasticsearch API key and stored it in context "${savedAs}"`)
-  } else {
-    prompter.warn('Could not mint an API key; the context keeps the project\'s basic-auth credentials (everything still works).')
-  }
+  const esApiKeyMinted = await mintContextApiKey(deps, savedAs)
 
   return {
     projectType,
@@ -213,25 +210,65 @@ export async function runProvisionNode (
     regionId: region.id,
     projectContextName: savedAs,
     endpoints,
+    esApiKeyMinted,
   }
 }
+
+const MINT_MAX_ATTEMPTS = 6
+const MINT_RETRY_DELAY_MS = 10_000
 
 /**
  * Mints an ES API key against the new context (subprocess; the key travels
  * over the child's stdout pipe, never argv) and rewrites the context's
  * elasticsearch auth to use it via the in-process writer + secret store.
- * Returns false on any failure — basic auth remains and the run continues.
+ *
+ * A fresh project can briefly refuse connections after --wait reports it
+ * initialized, so the mint holds under a spinner and retries retryable
+ * failures until success or the attempt budget runs out. Returns false on
+ * terminal failure — basic auth remains and the run continues.
  */
 async function mintContextApiKey (deps: QuickstartDeps, contextName: string): Promise<boolean> {
-  const result = await deps.runCli([
-    'es', 'security', 'create-api-key',
-    '--name', `${contextName}-quickstart`,
-    '--use-context', contextName,
-  ])
-  const keyBody = (result.data ?? {}) as { encoded?: string, api_key?: string }
-  const encoded = keyBody.encoded ?? keyBody.api_key
-  if (!result.ok || encoded == null) return false
+  const { prompter, runCli, sleep } = deps
+  const spin = prompter.spinner('Minting an Elasticsearch API key…')
 
+  for (let attempt = 1; attempt <= MINT_MAX_ATTEMPTS; attempt++) {
+    const result = await runCli([
+      'es', 'security', 'create-api-key',
+      '--name', `${contextName}-quickstart`,
+      '--use-context', contextName,
+    ])
+    const keyBody = (result.data ?? {}) as { encoded?: string, api_key?: string }
+    const encoded = keyBody.encoded ?? keyBody.api_key
+    if (result.ok && encoded != null) {
+      if (await storeMintedKey(contextName, encoded)) {
+        spin.stop(`Minted an Elasticsearch API key and stored it in context "${contextName}"`)
+        return true
+      }
+      break
+    }
+    if (result.ok || !isRetryableMintFailure(result) || attempt === MINT_MAX_ATTEMPTS) break
+    spin.message(`Minting an Elasticsearch API key… project not accepting requests yet (retry ${attempt}/${MINT_MAX_ATTEMPTS - 1})`)
+    await sleep(MINT_RETRY_DELAY_MS)
+  }
+
+  spin.fail('Could not mint an API key; the context keeps the project\'s basic-auth credentials (everything still works).')
+  return false
+}
+
+/**
+ * Failures worth another attempt while the project warms up: anything
+ * connection-level (no envelope, connection/timeout codes) and server-side
+ * 5xx/429/408. Envelope-coded config errors and other 4xx are terminal.
+ */
+function isRetryableMintFailure (result: CliResult): boolean {
+  const err = result.error
+  if (err == null) return true
+  if (err.status != null) return err.status >= 500 || err.status === 429 || err.status === 408
+  return err.code === 'connection_error' || err.code === 'timeout' || err.code === 'transport_error'
+}
+
+/** Writes the minted key into the context via the writer + secret store. */
+async function storeMintedKey (contextName: string, encoded: string): Promise<boolean> {
   try {
     const configPath = await resolveConfigPathForWrite()
     const config = await readRawConfig(configPath)

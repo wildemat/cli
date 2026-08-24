@@ -156,8 +156,22 @@ export async function runHandoffNode (
         const exitCode = await spawnAgentAndWait(agent.binPath, [prompt])
         return { choice: agent.id, detail: `exit ${exitCode}` }
       }
-      // IDE: open the current directory; prompts cannot be injected.
-      _spawn(agent.binPath, ['.'], { stdio: 'ignore', detached: true, shell: false }).unref()
+      // IDE: open the current directory; prompts cannot be injected. The
+      // detached child outlives this call, so a spawn failure (binary gone,
+      // EACCES) surfaces as an 'error' event that would crash the process if
+      // unhandled — downgrade it to manual instructions instead.
+      const openFailed = (err: Error): void => {
+        prompter.warn(`Could not open ${agent.label}: ${err.message}`)
+        prompter.info(`Open it yourself and paste this to its agent panel:\n  ${prompt}\nThe context doc is saved at: ${docPath}`)
+      }
+      try {
+        const child = _spawn(agent.binPath, ['.'], { stdio: 'ignore', detached: true, shell: false })
+        child.on('error', openFailed)
+        child.unref()
+      } catch (err) {
+        openFailed(err instanceof Error ? err : new Error(String(err)))
+        return { choice: agent.id, detail: 'open failed' }
+      }
       prompter.success(`Opened ${agent.label}. Paste this to its agent panel:`)
       prompter.info(prompt)
       return { choice: agent.id, detail: 'workspace opened' }
@@ -172,7 +186,13 @@ export async function runHandoffNode (
 
 function spawnAgentAndWait (binPath: string, args: string[]): Promise<number> {
   return new Promise((resolve) => {
-    const child = _spawn(binPath, args, { stdio: 'inherit', shell: false })
+    let child: ReturnType<SpawnFn>
+    try {
+      child = _spawn(binPath, args, { stdio: 'inherit', shell: false })
+    } catch {
+      resolve(1)
+      return
+    }
     child.on('error', () => resolve(1))
     child.on('close', (code) => resolve(code ?? 1))
   })

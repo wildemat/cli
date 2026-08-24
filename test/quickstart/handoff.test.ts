@@ -52,6 +52,12 @@ describe('agent detection', () => {
     assert.equal(whichBin('claude', { env: {} }), undefined)
   })
 
+  it('resolves Windows binaries via Path and default PATHEXT suffixes', async () => {
+    await writeFile(join(binDir, 'claude.cmd'), 'exit 0', 'utf-8')
+    const hit = whichBin('claude', { env: { Path: binDir }, platform: 'win32' })
+    assert.ok(hit != null && hit.toLowerCase().endsWith('claude.cmd'))
+  })
+
   it('detects only installed agents, in menu order', () => {
     const agents = detectAgents({ env: { PATH: binDir } })
     assert.deepEqual(agents.map((a) => a.id), ['claude', 'code'])
@@ -119,6 +125,39 @@ describe('runHandoffNode', () => {
     assert.equal(outcome.choice, 'code')
     assert.deepEqual(spawned[0]!.args, ['.'])
     assert.ok(prompter.log.some((l) => l.includes("let's continue building my search app")))
+  })
+
+  it('reports exit 1 when a terminal agent cannot be spawned', async () => {
+    _testSetSpawn((() => { throw new Error('spawn EACCES') }) as unknown as Parameters<typeof _testSetSpawn>[0])
+    const prompter = fakePrompter({ selects: ['agent:claude'] })
+    const outcome = await runHandoffNode(fakeDeps(prompter, fakeRunCli([]), { env: { PATH: binDir } }), STATE)
+    assert.deepEqual(outcome, { choice: 'claude', detail: 'exit 1' })
+  })
+
+  it('survives an async IDE spawn failure and prints manual instructions', async () => {
+    _testSetSpawn((() => {
+      const child = new EventEmitter() as EventEmitter & { unref: () => void }
+      child.unref = () => {}
+      queueMicrotask(() => child.emit('error', new Error('EACCES')))
+      return child
+    }) as unknown as Parameters<typeof _testSetSpawn>[0])
+    const prompter = fakePrompter({ selects: ['agent:code'] })
+    const outcome = await runHandoffNode(fakeDeps(prompter, fakeRunCli([]), { env: { PATH: binDir } }), STATE)
+    assert.equal(outcome.choice, 'code')
+    // The 'error' event fires after the node returns; it must not crash and
+    // must leave the user a way to hand off manually.
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(prompter.log.some((l) => l.startsWith('warn:Could not open VS Code: EACCES')))
+    assert.ok(prompter.log.some((l) => l.startsWith('info:') && l.includes(STATE.contextDocPath!)))
+  })
+
+  it('survives a synchronous IDE spawn throw', async () => {
+    _testSetSpawn((() => { throw new Error('spawn EACCES') }) as unknown as Parameters<typeof _testSetSpawn>[0])
+    const prompter = fakePrompter({ selects: ['agent:code'] })
+    const outcome = await runHandoffNode(fakeDeps(prompter, fakeRunCli([]), { env: { PATH: binDir } }), STATE)
+    assert.equal(outcome.detail, 'open failed')
+    assert.ok(prompter.log.some((l) => l.startsWith('warn:Could not open VS Code: spawn EACCES')))
+    assert.ok(prompter.log.some((l) => l.includes(STATE.contextDocPath!)))
   })
 
   it('opens Kibana via the saved endpoint', async () => {

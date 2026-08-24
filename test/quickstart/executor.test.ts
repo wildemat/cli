@@ -110,6 +110,38 @@ describe('quickstart executor', () => {
     assert.match(result.error!.message, /resource_already_exists_exception/)
   })
 
+  it('carries status alongside message-bearing envelopes and synthesizes status-only ones', async () => {
+    _testSetSpawn((() => fakeChild({
+      stderr: '{"error":{"code":"transport_error","status_code":403,"message":"forbidden"}}\n',
+      exitCode: 1,
+    })) as unknown as Parameters<typeof _testSetSpawn>[0])
+    const withMessage = await runCli(['x'])
+    assert.deepEqual(withMessage.error, { code: 'transport_error', message: 'forbidden', status: 403 })
+
+    _testSetSpawn((() => fakeChild({
+      stderr: '{"error":{"code":"transport_error","status_code":503}}\n',
+      exitCode: 1,
+    })) as unknown as Parameters<typeof _testSetSpawn>[0])
+    const statusOnly = await runCli(['x'])
+    assert.deepEqual(statusOnly.error, { code: 'transport_error', message: 'status 503', status: 503 })
+  })
+
+  it('falls back to body or code when the envelope has neither message nor status', async () => {
+    _testSetSpawn((() => fakeChild({
+      stderr: '{"error":{"code":"transport_error","body":{"reason":"boom"}}}\n',
+      exitCode: 1,
+    })) as unknown as Parameters<typeof _testSetSpawn>[0])
+    const bodyOnly = await runCli(['x'])
+    assert.deepEqual(bodyOnly.error, { code: 'transport_error', message: '{"reason":"boom"}' })
+
+    _testSetSpawn((() => fakeChild({
+      stderr: '{"error":{"code":"weird_error"}}\n',
+      exitCode: 1,
+    })) as unknown as Parameters<typeof _testSetSpawn>[0])
+    const codeOnly = await runCli(['x'])
+    assert.deepEqual(codeOnly.error, { code: 'weird_error', message: 'weird_error' })
+  })
+
   it('returns a spawn_error result when the child cannot be spawned', async () => {
     _testSetSpawn((() => fakeChild({ emitError: 'ENOENT' })) as unknown as Parameters<typeof _testSetSpawn>[0])
     const result = await runCli(['x'])

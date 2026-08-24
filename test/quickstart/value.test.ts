@@ -129,6 +129,23 @@ describe('runValueNode', () => {
     )
   })
 
+  it('halts with generic messages when failures carry no error envelope', async () => {
+    const noEnvelope = { ok: false, exitCode: 1, stderr: '' }
+    const createFail = fakeRunCli([{ match: 'es indices create', result: noEnvelope }])
+    await assert.rejects(
+      runValueNode(fakeDeps(fakePrompter(), createFail), 'quickstart'),
+      (err: unknown) => err instanceof QuickstartHalt && err.message === 'index creation failed',
+    )
+    const ingestFail = fakeRunCli([
+      { match: 'es indices create', result: ok({}) },
+      { match: 'es helpers bulk-ingest', result: noEnvelope },
+    ])
+    await assert.rejects(
+      runValueNode(fakeDeps(fakePrompter(), ingestFail), 'quickstart'),
+      (err: unknown) => err instanceof QuickstartHalt && err.message === 'bulk ingest failed',
+    )
+  })
+
   it('halts with a retry command when ingest fails', async () => {
     const runCli = fakeRunCli([
       { match: 'es indices create', result: ok({}) },

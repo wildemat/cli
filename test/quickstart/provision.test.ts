@@ -255,6 +255,57 @@ describe('runProvisionNode', () => {
     assert.ok(searchCreate.argv.includes('--save-as'))
   })
 
+  it('halts with search-namespace retry guidance when the fallback create also fails', async () => {
+    const runCli = fakeRunCli([
+      { match: 'cloud serverless regions list-regions', result: ok(REGIONS) },
+      { match: 'cloud serverless projects vector list', result: ok({ items: [] }) },
+      {
+        match: 'cloud serverless projects vector create',
+        result: fail('cloud_api_error', 'Cloud API error 403: {"errors":[{"code":"projects.create_project.forbidden"}]}'),
+      },
+      { match: 'cloud serverless projects search create', result: fail('cloud_api_error', 'quota exceeded') },
+    ])
+    await assert.rejects(
+      runProvisionNode(fakeDeps(fakePrompter({ confirms: [true] }), runCli), 'cloud-ctx'),
+      (err: unknown) => err instanceof QuickstartHalt &&
+        err.code === 'provision_failed' &&
+        err.nextSteps.some((s) => s.includes('projects search create')),
+    )
+  })
+
+  it('retries minting on 5xx and surfaces stderr when regions fail without an envelope', async () => {
+    let mintCalls = 0
+    const runCli = fakeRunCli([
+      { match: 'cloud serverless regions list-regions', result: ok(REGIONS) },
+      { match: 'cloud serverless projects vector list', result: ok({ items: [] }) },
+      {
+        match: 'cloud serverless projects vector create',
+        result: () => { seedSavedContextSync('quickstart'); return ok(CREATED) },
+      },
+      {
+        match: 'es security create-api-key',
+        result: () => {
+          mintCalls++
+          if (mintCalls < 2) return { ok: false, exitCode: 1, stderr: '', error: { code: 'transport_error', message: 'status 503', status: 503 } }
+          return ok({ encoded: 'bWludGVkLWtleQ==' })
+        },
+      },
+    ])
+    const result = await runProvisionNode(fakeDeps(fakePrompter(), runCli), 'cloud-ctx')
+    assert.equal(mintCalls, 2)
+    assert.equal(result.esApiKeyMinted, true)
+
+    const runCli2 = fakeRunCli([
+      { match: 'cloud serverless regions list-regions', result: { ok: false, exitCode: 7, stderr: 'connection reset\n' } },
+    ])
+    await assert.rejects(
+      runProvisionNode(fakeDeps(fakePrompter(), runCli2), 'cloud-ctx'),
+      (err: unknown) => err instanceof QuickstartHalt &&
+        err.code === 'regions_failed' &&
+        err.message.includes('connection reset'),
+    )
+  })
+
   it('halts when the 403 fallback is declined', async () => {
     const runCli = fakeRunCli([
       { match: 'cloud serverless regions list-regions', result: ok(REGIONS) },

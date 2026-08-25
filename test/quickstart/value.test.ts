@@ -88,7 +88,7 @@ describe('runValueNode', () => {
         },
       },
     ])
-    const prompter = fakePrompter()
+    const prompter = fakePrompter({ confirms: [true, true] })
     const result = await runValueNode(fakeDeps(prompter, runCli), 'quickstart')
 
     assert.equal(result.indexName, 'books')
@@ -112,7 +112,7 @@ describe('runValueNode', () => {
       { match: 'es indices create', result: fail('es_api_error', 'resource_already_exists_exception: index [books] already exists') },
     ])
     await assert.rejects(
-      runValueNode(fakeDeps(fakePrompter(), runCli), 'quickstart'),
+      runValueNode(fakeDeps(fakePrompter({ confirms: [true] }), runCli), 'quickstart'),
       (err: unknown) => err instanceof QuickstartHalt &&
         err.code === 'index_exists' &&
         err.nextSteps.some((s) => s.includes('es indices delete')),
@@ -124,7 +124,7 @@ describe('runValueNode', () => {
       { match: 'es indices create', result: fail('es_api_error', 'mapper_parsing_exception') },
     ])
     await assert.rejects(
-      runValueNode(fakeDeps(fakePrompter(), runCli), 'quickstart'),
+      runValueNode(fakeDeps(fakePrompter({ confirms: [true] }), runCli), 'quickstart'),
       (err: unknown) => err instanceof QuickstartHalt && err.code === 'index_create_failed',
     )
   })
@@ -133,7 +133,7 @@ describe('runValueNode', () => {
     const noEnvelope = { ok: false, exitCode: 1, stderr: '' }
     const createFail = fakeRunCli([{ match: 'es indices create', result: noEnvelope }])
     await assert.rejects(
-      runValueNode(fakeDeps(fakePrompter(), createFail), 'quickstart'),
+      runValueNode(fakeDeps(fakePrompter({ confirms: [true] }), createFail), 'quickstart'),
       (err: unknown) => err instanceof QuickstartHalt && err.message === 'index creation failed',
     )
     const ingestFail = fakeRunCli([
@@ -141,7 +141,7 @@ describe('runValueNode', () => {
       { match: 'es helpers bulk-ingest', result: noEnvelope },
     ])
     await assert.rejects(
-      runValueNode(fakeDeps(fakePrompter(), ingestFail), 'quickstart'),
+      runValueNode(fakeDeps(fakePrompter({ confirms: [true] }), ingestFail), 'quickstart'),
       (err: unknown) => err instanceof QuickstartHalt && err.message === 'bulk ingest failed',
     )
   })
@@ -152,7 +152,7 @@ describe('runValueNode', () => {
       { match: 'es helpers bulk-ingest', result: fail('bulk_error', 'inference timed out') },
     ])
     await assert.rejects(
-      runValueNode(fakeDeps(fakePrompter(), runCli), 'quickstart'),
+      runValueNode(fakeDeps(fakePrompter({ confirms: [true] }), runCli), 'quickstart'),
       (err: unknown) => err instanceof QuickstartHalt &&
         err.code === 'ingest_failed' &&
         err.nextSteps.some((s) => s.includes('bulk-ingest')),
@@ -167,8 +167,35 @@ describe('runValueNode', () => {
       { match: 'es search', result: fail('es_api_error', 'search_phase_execution_exception') },
     ])
     await assert.rejects(
-      runValueNode(fakeDeps(fakePrompter(), runCli), 'quickstart'),
+      runValueNode(fakeDeps(fakePrompter({ confirms: [true, true] }), runCli), 'quickstart'),
       (err: unknown) => err instanceof QuickstartHalt && err.code === 'search_failed',
+    )
+  })
+
+  it('shows the commands first and halts with them when the user declines', async () => {
+    const prompter = fakePrompter({ confirms: [false] })
+    await assert.rejects(
+      runValueNode(fakeDeps(prompter, fakeRunCli([])), 'quickstart'),
+      (err: unknown) => err instanceof QuickstartHalt &&
+        err.code === 'value_skipped' &&
+        err.nextSteps.some((s) => s.includes('es indices create')),
+    )
+    const note = prompter.log.find((l) => l.startsWith('note:'))!
+    assert.match(note, /power of vector search/)
+    assert.match(note, /elastic es indices create/)
+  })
+
+  it('halts before the comparison when the second gate is declined', async () => {
+    const runCli = fakeRunCli([
+      { match: 'es indices create', result: ok({}) },
+      { match: 'es helpers bulk-ingest', result: ok({}) },
+      { match: 'es indices refresh', result: ok({}) },
+    ])
+    await assert.rejects(
+      runValueNode(fakeDeps(fakePrompter({ confirms: [true, false] }), runCli), 'quickstart'),
+      (err: unknown) => err instanceof QuickstartHalt &&
+        err.code === 'value_skipped' &&
+        err.nextSteps.some((s) => s.includes('es search')),
     )
   })
 })

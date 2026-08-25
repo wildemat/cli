@@ -21,7 +21,7 @@ import {
 } from '../../src/quickstart/nodes/handoff.ts'
 import { _testSetSpawn as _testSetBookshopSpawn } from '../../src/quickstart/appinstall/bookshop.ts'
 import type { QuickstartState } from '../../src/quickstart/types.ts'
-import { fakeDeps, fakePrompter, fakeRunCli, ok } from './helpers.ts'
+import { fakeDeps, fakePrompter, fakeRunCli, ok, fail } from './helpers.ts'
 
 const STATE: QuickstartState = {
   target: 'cloud-serverless',
@@ -97,18 +97,26 @@ describe('runHandoffNode', () => {
     return spawned
   }
 
-  it('offers detected agents plus the sample app plus Kibana plus done, together', async () => {
+  it('offers install, agent/IDE, Kibana, and done in that order', async () => {
     const prompter = fakePrompter({ selects: ['done'] })
     await runHandoffNode(fakeDeps(prompter, fakeRunCli([]), { env: { PATH: binDir } }), STATE)
     const selectLine = prompter.log.find((l) => l.startsWith('select:'))!
-    assert.match(selectLine, /agent:claude/)
-    assert.match(selectLine, /agent:code/)
-    assert.match(selectLine, /install:bookshop/)
-    assert.match(selectLine, /kibana/)
-    assert.match(selectLine, /done/)
+    assert.match(selectLine, /install:bookshop,agent,kibana,done/)
     // The context doc path and next commands are always printed first.
     assert.ok(prompter.log.some((l) => l.includes(STATE.contextDocPath!)))
     assert.ok(prompter.log.some((l) => l.includes('elastic status --use-context quickstart')))
+  })
+
+  it('lists detected agents plus the copy-path escape in the agent submenu', async () => {
+    spawnRecorder(0) // intercepts the best-effort clipboard spawn
+    const prompter = fakePrompter({ selects: ['agent', 'copy-path'] })
+    const outcome = await runHandoffNode(fakeDeps(prompter, fakeRunCli([]), { env: { PATH: binDir } }), STATE)
+    const submenu = prompter.log.filter((l) => l.startsWith('select:'))[1]!
+    assert.match(submenu, /agent:claude/)
+    assert.match(submenu, /agent:code/)
+    assert.match(submenu, /copy-path/)
+    assert.deepEqual(outcome, { choice: 'context-path', detail: STATE.contextDocPath })
+    assert.ok(prompter.log.some((l) => l.startsWith('info:') && l.includes(STATE.contextDocPath!)))
   })
 
   it('hides the sample-app option when the state has no elasticsearch endpoint', async () => {
@@ -121,7 +129,7 @@ describe('runHandoffNode', () => {
 
   it('spawns a terminal agent with the @file prompt as one argument', async () => {
     const spawned = spawnRecorder(0)
-    const prompter = fakePrompter({ selects: ['agent:claude'] })
+    const prompter = fakePrompter({ selects: ['agent', 'agent:claude'] })
     const outcome = await runHandoffNode(fakeDeps(prompter, fakeRunCli([]), { env: { PATH: binDir } }), STATE)
     assert.equal(outcome.choice, 'claude')
     assert.equal(spawned.length, 1)
@@ -132,7 +140,7 @@ describe('runHandoffNode', () => {
 
   it('opens the workspace and prints the prompt for IDE-only targets', async () => {
     const spawned = spawnRecorder(0)
-    const prompter = fakePrompter({ selects: ['agent:code'] })
+    const prompter = fakePrompter({ selects: ['agent', 'agent:code'] })
     const outcome = await runHandoffNode(fakeDeps(prompter, fakeRunCli([]), { env: { PATH: binDir } }), STATE)
     assert.equal(outcome.choice, 'code')
     assert.deepEqual(spawned[0]!.args, ['.'])
@@ -141,7 +149,7 @@ describe('runHandoffNode', () => {
 
   it('reports exit 1 when a terminal agent cannot be spawned', async () => {
     _testSetSpawn((() => { throw new Error('spawn EACCES') }) as unknown as Parameters<typeof _testSetSpawn>[0])
-    const prompter = fakePrompter({ selects: ['agent:claude'] })
+    const prompter = fakePrompter({ selects: ['agent', 'agent:claude'] })
     const outcome = await runHandoffNode(fakeDeps(prompter, fakeRunCli([]), { env: { PATH: binDir } }), STATE)
     assert.deepEqual(outcome, { choice: 'claude', detail: 'exit 1' })
   })
@@ -153,7 +161,7 @@ describe('runHandoffNode', () => {
       queueMicrotask(() => child.emit('error', new Error('EACCES')))
       return child
     }) as unknown as Parameters<typeof _testSetSpawn>[0])
-    const prompter = fakePrompter({ selects: ['agent:code'] })
+    const prompter = fakePrompter({ selects: ['agent', 'agent:code'] })
     const outcome = await runHandoffNode(fakeDeps(prompter, fakeRunCli([]), { env: { PATH: binDir } }), STATE)
     assert.equal(outcome.choice, 'code')
     // The 'error' event fires after the node returns; it must not crash and
@@ -165,7 +173,7 @@ describe('runHandoffNode', () => {
 
   it('survives a synchronous IDE spawn throw', async () => {
     _testSetSpawn((() => { throw new Error('spawn EACCES') }) as unknown as Parameters<typeof _testSetSpawn>[0])
-    const prompter = fakePrompter({ selects: ['agent:code'] })
+    const prompter = fakePrompter({ selects: ['agent', 'agent:code'] })
     const outcome = await runHandoffNode(fakeDeps(prompter, fakeRunCli([]), { env: { PATH: binDir } }), STATE)
     assert.equal(outcome.detail, 'open failed')
     assert.ok(prompter.log.some((l) => l.startsWith('warn:Could not open VS Code: spawn EACCES')))
@@ -184,14 +192,42 @@ describe('runHandoffNode', () => {
       return child
     }) as unknown as Parameters<typeof _testSetBookshopSpawn>[0])
     const runCli = fakeRunCli([{ match: 'es security create-api-key', result: ok({ encoded: 'handoff-key' }) }])
-    const prompter = fakePrompter({ selects: ['install:bookshop'], texts: [target] })
+    const prompter = fakePrompter({ selects: ['install:bookshop', 'custom'], texts: [target] })
     const outcome = await runHandoffNode(fakeDeps(prompter, runCli, { env: { PATH: binDir } }), STATE)
     assert.deepEqual(outcome, { choice: 'install:bookshop', detail: 'installed' })
-    // The minted key was requested against the project context, then seeded.
-    assert.match(runCli.calls[0]!.argv.join(' '), /--use-context quickstart/)
+    // Quickstart minted the key against the project context before install.
+    assert.match(runCli.calls[0]!.argv.join(' '), /--name elastic-bookshop --use-context quickstart/)
     const env = await readFile(join(target, '.env'), 'utf-8')
     assert.match(env, /ELASTICSEARCH_URL=https:\/\/es\.example/)
     assert.match(env, /ELASTIC_API_KEY=handoff-key/)
+  })
+
+  it('surfaces a mint failure with the failed command, then retries or continues keyless', async () => {
+    const target = join(binDir, 'bookshop-keyless')
+    _testSetBookshopSpawn(((cmd: string, args: string[]) => {
+      const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter }
+      child.stderr = new EventEmitter()
+      queueMicrotask(() => {
+        mkdirSync(args[args.length - 1]!, { recursive: true })
+        child.emit('close', 0)
+      })
+      return child
+    }) as unknown as Parameters<typeof _testSetBookshopSpawn>[0])
+    let attempts = 0
+    const runCli = fakeRunCli([{
+      match: 'es security create-api-key',
+      result: () => { attempts++; return fail('forbidden', 'missing privilege') },
+    }])
+    // First failure → retry (true); second failure → continue without a key (false).
+    const prompter = fakePrompter({ selects: ['install:bookshop', 'custom'], confirms: [true, false], texts: [target] })
+    const outcome = await runHandoffNode(fakeDeps(prompter, runCli, { env: { PATH: binDir } }), STATE)
+    assert.deepEqual(outcome, { choice: 'install:bookshop', detail: 'installed' })
+    assert.equal(attempts, 2)
+    assert.ok(prompter.log.some((l) => l.startsWith('spinner-fail:') && l.includes('missing privilege')))
+    assert.ok(prompter.log.some((l) => l.startsWith('info:') && l.includes('elastic es security create-api-key --name elastic-bookshop')))
+    assert.ok(prompter.log.some((l) => l.startsWith('warn:') && l.includes('Continuing without a key')))
+    const env = await readFile(join(target, '.env'), 'utf-8')
+    assert.match(env, /ELASTIC_API_KEY=<mint one:/)
   })
 
   it('opens Kibana via the saved endpoint', async () => {

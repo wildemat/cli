@@ -38,6 +38,8 @@ export interface QuickstartDeps {
   env: NodeJS.ProcessEnv
   /** URL set for the ELASTIC_ENV-selected Cloud environment. */
   cloudEnv: CloudEnv
+  /** IANA timezone used to guess a default region ('' = no guess). */
+  timezone: string
   /** Sleep, injectable so retry loops are instant under test. */
   sleep: (ms: number) => Promise<void>
 }

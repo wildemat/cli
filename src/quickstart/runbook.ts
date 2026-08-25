@@ -41,7 +41,7 @@ export function buildRunbook (cloudEnv: CloudEnv): JsonValue {
         id: 'auth',
         title: 'Connect to Elastic Cloud',
         capability: 'An org API key stored in a named config context; secrets go to the OS keychain, never argv.',
-        ask_user: `Do you already have an Elastic Cloud account and API key? If not, send them to ${cloudEnv.signupUrl} then ${cloudEnv.apiKeysUrl}.`,
+        ask_user: `Do you already have an Elastic Cloud account and API key? If not, send them to ${cloudEnv.signupUrl} then ${cloudEnv.apiKeysUrl}. When the key form asks for roles, Organization owner is right for their own fresh account; members of a shared org should pick their usual narrower role.`,
         commands: [
           `elastic config context add <name> --cloud-url ${cloudEnv.apiUrl} --cloud-api-key <key> --json`,
           'elastic status --json  # probes the cloud block; 401/403 means a bad key',

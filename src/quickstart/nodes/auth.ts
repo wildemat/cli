@@ -25,6 +25,7 @@ import {
   hasInlineSecrets,
 } from '../../config/writer.ts'
 import { getSecretStore } from '../../config/secret-store.ts'
+import { hl } from '../prompts.ts'
 import { QuickstartHalt, type QuickstartDeps } from '../types.ts'
 
 const KEYCHAIN_SERVICE = 'elastic-cli'
@@ -53,13 +54,43 @@ export async function runAuthNode (deps: QuickstartDeps): Promise<AuthResult> {
     [
       'You need an Elastic Cloud account and an organization API key.',
       '',
-      `  Sign up (free trial):  ${signupUrl}`,
-      `  Create an API key:     ${apiKeysUrl}`,
+      `  Sign up (free trial):  ${hl.url(signupUrl)}`,
+      `  Create an API key:     ${hl.url(apiKeysUrl)}`,
+      '',
+      `When the key form asks you to assign roles, pick ${hl.val('Organization owner')} —`,
+      'right for a fresh account of your own. On a shared organization you may',
+      'want a narrower role; if so, you\'ll know which one fits.',
     ].join('\n'),
     'Connect to Elastic Cloud',
   )
   const opened = deps.openBrowser(apiKeysUrl)
   if (opened) deps.prompter.info('Opened your browser (links above if it did not appear).')
+
+  const start = await deps.prompter.select('How do you want to start?', [
+    { value: 'paste', label: 'Paste my Elastic Cloud API key', hint: 'the browser tab above has the key page' },
+    { value: 'local', label: 'Run Elasticsearch locally instead', hint: 'no cloud account needed' },
+  ])
+  if (start === 'local') {
+    deps.prompter.note(
+      [
+        'One command (requires Docker):',
+        '',
+        `  ${hl.cmd('curl -fsSL https://elastic.co/start-local | sh')}`,
+        '',
+        'That starts Elasticsearch and Kibana on localhost (ports 9200/5601)',
+        'with credentials printed at the end.',
+      ].join('\n'),
+      'Run Elasticsearch locally',
+    )
+    throw new QuickstartHalt(
+      'local_breakout',
+      'Quickstart provisions Elastic Cloud projects; the command above starts a local Elasticsearch instead.',
+      [
+        'Run: curl -fsSL https://elastic.co/start-local | sh',
+        'When you want a cloud project later, re-run: elastic quickstart',
+      ],
+    )
+  }
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     const key = (await deps.prompter.password('Paste your Elastic Cloud API key')).trim()
@@ -68,9 +99,10 @@ export async function runAuthNode (deps: QuickstartDeps): Promise<AuthResult> {
     if (probe.ok) {
       const contextName = await persistCloudKey(key, apiUrl)
       deps.prompter.success(`API key verified and saved to context "${contextName}" (secret stored securely)`)
+      deps.prompter.info(`New to contexts? They're named connection profiles — see yours: ${hl.cmd('elastic config context list')}`)
       return { cloudContextName: contextName, reused: false }
     }
-    deps.prompter.warn(`That key did not work (${probe.error}).${attempt === 1 ? ' One more try.' : ''}`)
+    deps.prompter.warn(`That key did not work — this check failed: GET ${apiUrl}/api/v1/user.${attempt === 1 ? ' One more try.' : ''}`)
   }
 
   throw new QuickstartHalt(

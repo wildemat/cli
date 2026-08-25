@@ -32,7 +32,6 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import spawn from 'cross-spawn'
 import { DEMO_QUERY, LINKS } from '../constants.ts'
-import type { Prompter } from '../prompts.ts'
 import type { QuickstartDeps } from '../types.ts'
 import type { AppInstaller, AppInstallOutcome, AppInstallPayload } from './contract.ts'
 
@@ -42,7 +41,7 @@ const APP_KEY_NAME = 'elastic-bookshop'
 /** Never `hybrid` — 21k books, far slower to set up. */
 const PROFILE = 'demo'
 const FRONTEND_URL = 'http://localhost:3000'
-const DIR_ATTEMPTS = 3
+const DIR_ATTEMPTS = 5
 
 type SpawnFn = typeof spawn
 let _spawn: SpawnFn = spawn
@@ -52,15 +51,19 @@ export function _testSetSpawn (fn: SpawnFn | undefined): void { _spawn = fn ?? s
 
 export const bookshopInstaller: AppInstaller = {
   id: 'bookshop',
-  label: 'Install the Elastic Bookshop sample app',
-  hint: 'clones + configures it against this project; you run it',
+  label: 'Install the complete sample app to showcase Elastic features',
+  hint: 'Elastic Bookshop — cloned + configured against this project; you run it',
+  keyName: APP_KEY_NAME,
   install: installBookshop,
 }
+
+/** Pause between completed steps so the progression reads as steps, not a blast. */
+const STEP_PAUSE_MS = 2000
 
 async function installBookshop (payload: AppInstallPayload, deps: QuickstartDeps): Promise<AppInstallOutcome> {
   const { prompter } = deps
 
-  const dir = await pickTargetDir(prompter)
+  const dir = await pickTargetDir(deps)
   if (dir == null) {
     prompter.info(manualInstructions(payload))
     return { detail: 'no directory chosen' }
@@ -74,15 +77,9 @@ async function installBookshop (payload: AppInstallPayload, deps: QuickstartDeps
     return { detail: 'clone failed' }
   }
   spin.stop(`Cloned Elastic Bookshop into ${dir}`)
+  await deps.sleep(STEP_PAUSE_MS)
 
-  const keySpin = prompter.spinner(`Minting the app a dedicated API key ("${APP_KEY_NAME}")…`)
-  const key = await payload.mintDedicatedKey(APP_KEY_NAME)
-  if (key == null) {
-    keySpin.fail('Could not mint an API key — .env gets a placeholder to fill in.')
-  } else {
-    keySpin.stop('Minted a dedicated API key (the context\'s own credentials stay in the keychain).')
-  }
-
+  const key = payload.dedicatedApiKey
   const envPath = join(dir, '.env')
   try {
     await writeFile(envPath, envFileContent(payload, key), { encoding: 'utf-8', mode: 0o600 })
@@ -94,7 +91,8 @@ async function installBookshop (payload: AppInstallPayload, deps: QuickstartDeps
     prompter.info(manualInstructions(payload))
     return { detail: '.env write failed' }
   }
-  prompter.success(`Wrote ${envPath} (0600) with the project connection.`)
+  prompter.success(`Wrote ${envPath} (0600) with the project connection${key != null ? ' and the app\'s dedicated API key' : ''}.`)
+  await deps.sleep(STEP_PAUSE_MS)
 
   prompter.note(runInstructions(dir, payload), 'Run the Bookshop app (new shell)')
   return { dir, detail: 'installed' }
@@ -107,22 +105,50 @@ function expandTilde (p: string): string {
   return p
 }
 
-/** Asks for a new or empty target directory; undefined after 3 misses. */
-async function pickTargetDir (prompter: Prompter): Promise<string | undefined> {
+/** First absent `~/elastic-bookshop`, `~/elastic-bookshop-2`, … */
+function defaultInstallDir (): string {
+  const base = join(homedir(), DEFAULT_DIR)
+  if (!existsSync(base)) return base
+  for (let i = 2; ; i++) {
+    const candidate = `${base}-${i}`
+    if (!existsSync(candidate)) return candidate
+  }
+}
+
+/** undefined = usable; otherwise the warning to show. */
+async function targetDirProblem (dir: string): Promise<string | undefined> {
+  if (!existsSync(dir)) return undefined
+  try {
+    if ((await readdir(dir)).length === 0) return undefined
+    return `${dir} is not empty — pick a new or empty directory.`
+  } catch {
+    return `${dir} is a file or not accessible — pick another path.`
+  }
+}
+
+/**
+ * Full-path default in the home directory, or a typed path (with ~
+ * expansion), re-asked while invalid; undefined after the attempt budget.
+ */
+async function pickTargetDir (deps: QuickstartDeps): Promise<string | undefined> {
+  const { prompter } = deps
+  const defaultDir = defaultInstallDir()
+  const mode = await prompter.select('Where should the app be installed?', [
+    { value: 'default', label: `Install to ${defaultDir}`, hint: 'a new directory in your home folder' },
+    { value: 'custom', label: 'Choose my own path', hint: 'type a directory' },
+  ])
+  if (mode === 'default') return defaultDir
+
   for (let attempt = 1; attempt <= DIR_ATTEMPTS; attempt++) {
-    const raw = (await prompter.text('Where should Elastic Bookshop be installed?', DEFAULT_DIR)).trim()
+    const raw = (await prompter.text('Directory for the app', defaultDir)).trim()
     if (raw.length === 0) {
       prompter.warn('No path entered — a new or empty directory is required.')
       continue
     }
     const dir = resolve(expandTilde(raw))
-    if (!existsSync(dir)) return dir
-    try {
-      if ((await readdir(dir)).length === 0) return dir
-      prompter.warn(`${dir} is not empty — pick a new or empty directory.`)
-    } catch {
-      prompter.warn(`${dir} exists and is not a directory — pick another path.`)
-    }
+    const problem = await targetDirProblem(dir)
+    if (problem == null) return dir
+    prompter.warn(problem)
   }
   return undefined
 }
@@ -190,8 +216,7 @@ export function runInstructions (dir: string, payload: AppInstallPayload): strin
     `docker compose exec backend ./bookshop search ${shq(query)}`,
     `Open ${FRONTEND_URL} — self-guided tour at /guide`,
     '',
-    `The app sets up its own bookshop-* indices in your project${payload.indexName != null ? `; the "${payload.indexName}" index is untouched` : ''}.`,
-    'Keep it on localhost — publicly reachable inference routes can run up cost.',
+    `More about the app: ${LINKS.referenceApp}`,
   ].join('\n')
 }
 

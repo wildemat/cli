@@ -31,6 +31,7 @@ function productionDeps (cloudEnv: CloudEnv): QuickstartDeps {
     openBrowser,
     env: process.env,
     cloudEnv,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   }
 }

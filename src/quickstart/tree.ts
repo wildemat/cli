@@ -11,9 +11,10 @@
  * self-describing runbook for agents. The internal shape is private — only
  * the runbook (with its schema_version) is a published contract.
  *
- * v1 is nearly linear on purpose (zero questions before provisioning). The
- * node structure exists so fast-follow branches (search project type, local
- * via start-local, own-data ingestion) slot in without a rewrite. Three seams
+ * v1 is nearly linear on purpose (one region question before provisioning,
+ * confirm gates around the value moment). The node structure exists so
+ * fast-follow branches (search project type, local via start-local, own-data
+ * ingestion) slot in without a rewrite. Three seams
  * are kept explicit, each with one v1 implementation: provision(),
  * writeContext() (delegated to --save-as), and inferenceStrategy() (EIS
  * defaults — nothing to configure on cloud).

@@ -28,7 +28,7 @@ function payload (overrides: Partial<AppInstallPayload> = {}): AppInstallPayload
     indexName: 'books',
     demoQuery: 'a story about growing up',
     projectType: 'vectordb',
-    mintDedicatedKey: async () => 'encoded-key',
+    dedicatedApiKey: 'encoded-key',
     ...overrides,
   }
 }
@@ -64,10 +64,10 @@ before(async () => { tmp = await mkdtemp(join(tmpdir(), 'qs-bookshop-')) })
 afterEach(() => { _testSetSpawn(undefined) })
 
 describe('bookshopInstaller.install', () => {
-  it('clones, mints a key, seeds .env (0600), and prints run commands', async () => {
+  it('clones, seeds .env (0600) with the pre-minted key, and prints run commands', async () => {
     const target = join(tmp, 'happy')
     const git = fakeGit(0)
-    const { prompter, run } = install({ texts: [target] })
+    const { prompter, run } = install({ selects: ['custom'], texts: [target] })
     const outcome = await run()
 
     assert.deepEqual(outcome, { dir: target, detail: 'installed' })
@@ -86,6 +86,19 @@ describe('bookshopInstaller.install', () => {
     assert.match(note, /docker compose up --build --detach/)
     assert.match(note, /setup --profile demo/)
     assert.match(note, /a story about growing up/)
+    // Plain pointer for newcomers instead of indices/cost jargon.
+    assert.match(note, /More about the app: https:\/\/github\.com\/elastic\/search-reference-app/)
+  })
+
+  it('defaults to a fresh directory under the home folder', async () => {
+    // Failing fake git keeps the test from writing into the real home dir;
+    // the chosen path is asserted from the spinner label.
+    fakeGit(1)
+    const { prompter, run } = install({ selects: ['default'] })
+    const outcome = await run()
+    assert.equal(outcome.detail, 'clone failed')
+    const spin = prompter.log.find((l) => l.startsWith('spinner:Cloning'))!
+    assert.ok(spin.includes(join(homedir(), 'elastic-bookshop')))
   })
 
   it('accepts an existing empty directory and skips a non-empty one', async () => {
@@ -96,7 +109,7 @@ describe('bookshopInstaller.install', () => {
     mkdirSync(empty)
 
     fakeGit(0)
-    const { prompter, run } = install({ texts: [occupied, empty] })
+    const { prompter, run } = install({ selects: ['custom'], texts: [occupied, empty] })
     const outcome = await run()
     assert.equal(outcome.dir, empty)
     assert.ok(prompter.log.some((l) => l.startsWith('warn:') && l.includes('not empty')))
@@ -106,10 +119,10 @@ describe('bookshopInstaller.install', () => {
     const filePath = join(tmp, 'a-file')
     await writeFile(filePath, 'x', 'utf-8')
 
-    const { prompter, run } = install({ texts: [filePath, '', filePath] })
+    const { prompter, run } = install({ selects: ['custom'], texts: [filePath, '', filePath, filePath, filePath] })
     const outcome = await run()
     assert.deepEqual(outcome, { detail: 'no directory chosen' })
-    assert.ok(prompter.log.some((l) => l.startsWith('warn:') && l.includes('not a directory')))
+    assert.ok(prompter.log.some((l) => l.startsWith('warn:') && l.includes('is a file or not accessible')))
     assert.ok(prompter.log.some((l) => l.startsWith('warn:') && l.includes('No path entered')))
     const info = prompter.log.find((l) => l.startsWith('info:'))!
     assert.match(info, /git clone/)
@@ -121,7 +134,7 @@ describe('bookshopInstaller.install', () => {
     // the "not empty" warning without the test writing anywhere real. The
     // failing fake git is a backstop in case a bare home dir ever accepts.
     fakeGit(1)
-    const { prompter, run } = install({ texts: ['~', '', ''] })
+    const { prompter, run } = install({ selects: ['custom'], texts: ['~', '', '', '', ''] })
     await run()
     assert.ok(prompter.log.some((l) => l.startsWith('warn:') && l.includes(homedir()) && !l.includes('~')))
   })
@@ -130,7 +143,7 @@ describe('bookshopInstaller.install', () => {
     const fileParent = join(tmp, 'parent-file')
     await writeFile(fileParent, 'x', 'utf-8')
     fakeGit(0)
-    const { prompter, run } = install({ texts: [join(fileParent, 'child')] })
+    const { prompter, run } = install({ selects: ['custom'], texts: [join(fileParent, 'child')] })
     const outcome = await run()
     assert.deepEqual(outcome, { detail: 'clone failed' })
     assert.ok(prompter.log.some((l) => l.startsWith('spinner-fail:')))
@@ -146,7 +159,7 @@ describe('bookshopInstaller.install', () => {
       queueMicrotask(() => child.emit('close', 0))
       return child
     }) as unknown as Parameters<typeof _testSetSpawn>[0])
-    const { prompter, run } = install({ texts: [target] })
+    const { prompter, run } = install({ selects: ['custom'], texts: [target] })
     const outcome = await run()
     assert.deepEqual(outcome, { detail: '.env write failed' })
     assert.ok(prompter.log.some((l) => l.startsWith('warn:') && l.includes('Could not write')))
@@ -157,7 +170,7 @@ describe('bookshopInstaller.install', () => {
   it('downgrades a failed clone to manual instructions', async () => {
     const target = join(tmp, 'clone-fail')
     fakeGit(128, 'fatal: repository not found\n')
-    const { prompter, run } = install({ texts: [target] })
+    const { prompter, run } = install({ selects: ['custom'], texts: [target] })
     const outcome = await run()
     assert.deepEqual(outcome, { detail: 'clone failed' })
     assert.ok(prompter.log.some((l) => l.startsWith('spinner-fail:') && l.includes('repository not found')))
@@ -172,35 +185,33 @@ describe('bookshopInstaller.install', () => {
       queueMicrotask(() => child.emit('error', new Error('spawn git ENOENT')))
       return child
     }) as unknown as Parameters<typeof _testSetSpawn>[0])
-    const first = install({ texts: [target] })
+    const first = install({ selects: ['custom'], texts: [target] })
     assert.deepEqual(await first.run(), { detail: 'clone failed' })
     assert.ok(first.prompter.log.some((l) => l.includes('spawn git ENOENT')))
 
     _testSetSpawn((() => { throw new Error('ENOENT') }) as unknown as Parameters<typeof _testSetSpawn>[0])
-    const second = install({ texts: [join(tmp, 'no-git-2')] })
+    const second = install({ selects: ['custom'], texts: [join(tmp, 'no-git-2')] })
     assert.deepEqual(await second.run(), { detail: 'clone failed' })
   })
 
   it('reports a code-only clone failure when git wrote nothing to stderr', async () => {
     const target = join(tmp, 'quiet-fail')
     fakeGit(1)
-    const { prompter, run } = install({ texts: [target] })
+    const { prompter, run } = install({ selects: ['custom'], texts: [target] })
     assert.deepEqual(await run(), { detail: 'clone failed' })
     assert.ok(prompter.log.some((l) => l.includes('git exited with code 1')))
   })
 
-  it('writes a placeholder key and continues when minting fails', async () => {
+  it('writes a placeholder key and continues when the payload carries no key', async () => {
     const target = join(tmp, 'no-key')
     fakeGit(0)
-    const { prompter, run } = install(
-      { texts: [target] },
-      payload({ mintDedicatedKey: async () => undefined }),
-    )
+    const p = payload()
+    delete (p as Partial<AppInstallPayload>).dedicatedApiKey
+    const { run } = install({ selects: ['custom'], texts: [target] }, p)
     const outcome = await run()
     assert.equal(outcome.detail, 'installed')
     const env = await readFile(join(target, '.env'), 'utf-8')
     assert.match(env, /ELASTIC_API_KEY=<mint one: elastic es security create-api-key --name elastic-bookshop --use-context quickstart>/)
-    assert.ok(prompter.log.some((l) => l.startsWith('spinner-fail:') && l.includes('placeholder')))
   })
 })
 

@@ -117,6 +117,7 @@ export function fakeDeps (prompter: Prompter, runCli: RunCli, extra: Partial<Qui
     openBrowser: () => true,
     env: {},
     cloudEnv: CLOUD_ENVS.prod,
+    timezone: '',
     sleep: async () => {},
     ...extra,
   }

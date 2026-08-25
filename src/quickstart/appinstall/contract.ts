@@ -14,12 +14,14 @@
  * installers means stamping it with a schema_version first.
  *
  * Credential rule: installers never see the context's credentials or the
- * org-level cloud key. The only way to obtain one is mintDedicatedKey,
- * which creates a per-app Elasticsearch API key scoped to the project.
+ * org-level cloud key, and they cannot mint keys themselves. Quickstart
+ * mints the per-app Elasticsearch key (named by the installer's keyName)
+ * before invoking install, owning the failure/retry conversation, and
+ * passes at most that one credential in the payload.
  */
 
-import { mintEsApiKey } from '../es-keys.ts'
-import type { ProjectType, QuickstartDeps, QuickstartState } from '../types.ts'
+import type { ProjectType, QuickstartState } from '../types.ts'
+import type { QuickstartDeps } from '../types.ts'
 
 /** Neutral facts an installer may consume; no app-specific vocabulary. */
 export interface AppInstallPayload {
@@ -31,12 +33,8 @@ export interface AppInstallPayload {
   /** The query just demonstrated, reusable as the app's first search. */
   demoQuery?: string
   projectType: ProjectType
-  /**
-   * Mints a dedicated ES API key for the app and returns its encoded value
-   * (undefined on failure). Single attempt: by handoff time the project has
-   * already served searches, so warm-up retries are provision's concern.
-   */
-  mintDedicatedKey: (appName: string) => Promise<string | undefined>
+  /** Pre-minted per-app ES API key (encoded); absent when minting failed. */
+  dedicatedApiKey?: string
 }
 
 export interface AppInstallOutcome {
@@ -50,21 +48,19 @@ export interface AppInstaller {
   id: string
   label: string
   hint: string
+  /** Name quickstart uses when minting the app's dedicated ES API key. */
+  keyName: string
   install: (payload: AppInstallPayload, deps: QuickstartDeps) => Promise<AppInstallOutcome>
 }
 
 /** Projects the run state into the neutral payload installers receive. */
-export function buildInstallPayload (state: QuickstartState, deps: QuickstartDeps): AppInstallPayload {
-  const contextName = state.projectContextName ?? ''
+export function buildInstallPayload (state: QuickstartState, dedicatedApiKey?: string): AppInstallPayload {
   return {
-    contextName,
+    contextName: state.projectContextName ?? '',
     endpoints: { ...state.endpoints },
     ...(state.indexName != null ? { indexName: state.indexName } : {}),
     ...(state.demoQuery != null ? { demoQuery: state.demoQuery } : {}),
     projectType: state.projectType ?? 'vectordb',
-    mintDedicatedKey: async (appName) => {
-      const { result, encoded } = await mintEsApiKey(deps.runCli, appName, contextName)
-      return result.ok ? encoded : undefined
-    },
+    ...(dedicatedApiKey != null ? { dedicatedApiKey } : {}),
   }
 }

@@ -53,7 +53,8 @@ function fetchForKey (validKey: string): typeof fetch {
 }
 
 function authDeps (script: PromptScript, validKey: string): QuickstartDeps {
-  return fakeDeps(fakePrompter(script), fakeRunCli([]), { fetchFn: fetchForKey(validKey) })
+  // The paste path starts with the paste-vs-local select; default to paste.
+  return fakeDeps(fakePrompter({ selects: ['paste'], ...script }), fakeRunCli([]), { fetchFn: fetchForKey(validKey) })
 }
 
 describe('runAuthNode — detection', () => {
@@ -177,12 +178,32 @@ describe('runAuthNode — paste flow', () => {
     assert.equal(written.contexts['elastic-cloud']!.elasticsearch?.url, 'https://es.example')
   })
 
-  it('retries once after a bad key', async () => {
-    const prompter = fakePrompter({ passwords: ['bad-key', 'fresh-key'] })
+  it('retries once after a bad key, naming the failed check', async () => {
+    const prompter = fakePrompter({ selects: ['paste'], passwords: ['bad-key', 'fresh-key'] })
     const deps = fakeDeps(prompter, fakeRunCli([]), { fetchFn: fetchForKey('fresh-key') })
     const result = await runAuthNode(deps)
     assert.equal(result.cloudContextName, 'elastic-cloud')
-    assert.ok(prompter.log.some((l) => l.startsWith('warn:That key did not work')))
+    const warn = prompter.log.find((l) => l.startsWith('warn:That key did not work'))!
+    assert.match(warn, /GET https:\/\/api\.elastic-cloud\.com\/api\/v1\/user/)
+  })
+
+  it('offers a local breakout that halts with start-local guidance', async () => {
+    const prompter = fakePrompter({ selects: ['local'] })
+    const deps = fakeDeps(prompter, fakeRunCli([]), { fetchFn: fetchForKey('unused') })
+    await assert.rejects(
+      runAuthNode(deps),
+      (err: unknown) => err instanceof QuickstartHalt &&
+        err.code === 'local_breakout' &&
+        err.nextSteps.some((s) => s.includes('start-local')),
+    )
+    assert.ok(prompter.log.some((l) => l.startsWith('note:') && l.includes('elastic.co/start-local')))
+  })
+
+  it('explains contexts right after the key is saved', async () => {
+    const prompter = fakePrompter({ selects: ['paste'], passwords: ['fresh-key'] })
+    const deps = fakeDeps(prompter, fakeRunCli([]), { fetchFn: fetchForKey('fresh-key') })
+    await runAuthNode(deps)
+    assert.ok(prompter.log.some((l) => l.startsWith('info:') && l.includes('elastic config context list')))
   })
 
   it('halts with manual guidance after two bad keys', async () => {
@@ -196,7 +217,7 @@ describe('runAuthNode — paste flow', () => {
   })
 
   it('pastes against QA and persists the QA cloud url when ELASTIC_ENV selects qa', async () => {
-    const prompter = fakePrompter({ passwords: ['fresh-key'] })
+    const prompter = fakePrompter({ selects: ['paste'], passwords: ['fresh-key'] })
     let openedUrl = ''
     const deps = fakeDeps(prompter, fakeRunCli([]), {
       fetchFn: fetchForKey('fresh-key'),
@@ -212,8 +233,8 @@ describe('runAuthNode — paste flow', () => {
     assert.equal(written.contexts['elastic-cloud']!.cloud.url, 'https://public-api.qa.cld.elstc.co')
   })
 
-  it('prints signup and API-key URLs as text (browser may fail silently)', async () => {
-    const prompter = fakePrompter({ passwords: ['fresh-key'] })
+  it('prints signup, API-key URLs, and role guidance as text (browser may fail silently)', async () => {
+    const prompter = fakePrompter({ selects: ['paste'], passwords: ['fresh-key'] })
     let openedUrl = ''
     const deps = fakeDeps(prompter, fakeRunCli([]), {
       fetchFn: fetchForKey('fresh-key'),
@@ -223,6 +244,7 @@ describe('runAuthNode — paste flow', () => {
     const note = prompter.log.find((l) => l.startsWith('note:'))!
     assert.match(note, /registration/)
     assert.match(note, /account\/keys/)
+    assert.match(note, /Organization owner/)
     assert.match(openedUrl, /account\/keys/)
   })
 })

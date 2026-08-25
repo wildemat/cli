@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import {
   pickDefaultRegion,
+  regionFragmentsForTimezone,
   firstFreeName,
   runProvisionNode,
 } from '../../src/quickstart/nodes/provision.ts'
@@ -48,6 +49,24 @@ describe('pickDefaultRegion', () => {
     assert.equal(pickDefaultRegion([{ id: 'x-1' }])?.id, 'x-1')
     assert.equal(pickDefaultRegion([]), undefined)
     assert.equal(pickDefaultRegion([{ id: 'x', project_creation_enabled: false }]), undefined)
+  })
+
+  it('prefers a timezone-suggested region over the static preference list', () => {
+    const fragments = regionFragmentsForTimezone('Europe/Berlin')
+    assert.equal(pickDefaultRegion(REGIONS, fragments)?.id, 'aws-eu-west-1')
+    const us = regionFragmentsForTimezone('America/New_York')
+    assert.equal(pickDefaultRegion(REGIONS, us)?.id, 'gcp-us-central1')
+  })
+})
+
+describe('regionFragmentsForTimezone', () => {
+  it('maps continents to region fragments and unknowns to none', () => {
+    assert.ok(regionFragmentsForTimezone('Europe/Berlin').includes('eu-west'))
+    assert.ok(regionFragmentsForTimezone('Asia/Tokyo').includes('ap-southeast'))
+    assert.ok(regionFragmentsForTimezone('America/New_York').includes('us-east'))
+    assert.deepEqual(regionFragmentsForTimezone('Etc/UTC'), [])
+    assert.deepEqual(regionFragmentsForTimezone(undefined), [])
+    assert.deepEqual(regionFragmentsForTimezone(''), [])
   })
 })
 
@@ -113,7 +132,7 @@ describe('runProvisionNode', () => {
       },
       mintRoute,
     ])
-    const prompter = fakePrompter()
+    const prompter = fakePrompter({ selects: ['default'] })
     const result = await runProvisionNode(fakeDeps(prompter, runCli), 'cloud-ctx')
 
     assert.equal(result.projectType, 'vectordb')
@@ -158,7 +177,7 @@ describe('runProvisionNode', () => {
       },
       { match: 'es security create-api-key', result: fail('es_api_error', 'forbidden') },
     ])
-    const prompter = fakePrompter()
+    const prompter = fakePrompter({ selects: ['default'] })
     const result = await runProvisionNode(fakeDeps(prompter, runCli), 'cloud-ctx')
     assert.equal(result.projectContextName, 'quickstart')
     assert.equal(result.esApiKeyMinted, false)
@@ -189,7 +208,7 @@ describe('runProvisionNode', () => {
         },
       },
     ])
-    const prompter = fakePrompter()
+    const prompter = fakePrompter({ selects: ['default'] })
     const result = await runProvisionNode(fakeDeps(prompter, runCli), 'cloud-ctx')
     assert.equal(mintCalls, 3)
     assert.equal(result.esApiKeyMinted, true)
@@ -210,9 +229,27 @@ describe('runProvisionNode', () => {
         result: () => { mintCalls++; return fail('connection_error', 'fetch failed') },
       },
     ])
-    const result = await runProvisionNode(fakeDeps(fakePrompter(), runCli), 'cloud-ctx')
+    const result = await runProvisionNode(fakeDeps(fakePrompter({ selects: ['default'] }), runCli), 'cloud-ctx')
     assert.equal(mintCalls, 6)
     assert.equal(result.esApiKeyMinted, false)
+  })
+
+  it('lets the user choose a region instead of the default', async () => {
+    const runCli = fakeRunCli([
+      { match: 'cloud serverless regions list-regions', result: ok(REGIONS) },
+      { match: 'cloud serverless projects vector list', result: ok({ items: [] }) },
+      {
+        match: 'cloud serverless projects vector create',
+        result: () => { seedSavedContextSync('quickstart'); return ok(CREATED) },
+      },
+      mintRoute,
+    ])
+    const prompter = fakePrompter({ selects: ['choose', 'azure-eastus2'] })
+    const result = await runProvisionNode(fakeDeps(prompter, runCli), 'cloud-ctx')
+    assert.equal(result.regionId, 'azure-eastus2')
+    // The full-list submenu offered every creatable region.
+    const submenu = prompter.log.filter((l) => l.startsWith('select:'))[1]!
+    assert.match(submenu, /azure-eastus2,aws-eu-west-1,gcp-us-central1/)
   })
 
   it('suffixes the name past existing projects', async () => {
@@ -225,7 +262,7 @@ describe('runProvisionNode', () => {
       },
       mintRoute,
     ])
-    const result = await runProvisionNode(fakeDeps(fakePrompter(), runCli), 'cloud-ctx')
+    const result = await runProvisionNode(fakeDeps(fakePrompter({ selects: ['default'] }), runCli), 'cloud-ctx')
     assert.equal(result.projectName, 'quickstart-2')
     assert.equal(result.projectContextName, 'quickstart-2')
   })
@@ -242,7 +279,7 @@ describe('runProvisionNode', () => {
       mintRoute,
     ])
     const result = await runProvisionNode(
-      fakeDeps(fakePrompter({ confirms: [true] }), runCli),
+      fakeDeps(fakePrompter({ selects: ['default'], confirms: [true] }), runCli),
       'cloud-ctx',
     )
     assert.equal(result.projectType, 'elasticsearch')
@@ -268,7 +305,7 @@ describe('runProvisionNode', () => {
       { match: 'cloud serverless projects search create', result: fail('cloud_api_error', 'quota exceeded') },
     ])
     await assert.rejects(
-      runProvisionNode(fakeDeps(fakePrompter({ confirms: [true] }), runCli), 'cloud-ctx'),
+      runProvisionNode(fakeDeps(fakePrompter({ selects: ['default'], confirms: [true] }), runCli), 'cloud-ctx'),
       (err: unknown) => err instanceof QuickstartHalt &&
         err.code === 'provision_failed' &&
         err.nextSteps.some((s) => s.includes('projects search create')),
@@ -293,7 +330,7 @@ describe('runProvisionNode', () => {
         },
       },
     ])
-    const result = await runProvisionNode(fakeDeps(fakePrompter(), runCli), 'cloud-ctx')
+    const result = await runProvisionNode(fakeDeps(fakePrompter({ selects: ['default'] }), runCli), 'cloud-ctx')
     assert.equal(mintCalls, 2)
     assert.equal(result.esApiKeyMinted, true)
 
@@ -318,7 +355,7 @@ describe('runProvisionNode', () => {
       },
     ])
     await assert.rejects(
-      runProvisionNode(fakeDeps(fakePrompter({ confirms: [false] }), runCli), 'cloud-ctx'),
+      runProvisionNode(fakeDeps(fakePrompter({ selects: ['default'], confirms: [false] }), runCli), 'cloud-ctx'),
       (err: unknown) => err instanceof QuickstartHalt && err.code === 'vectordb_forbidden',
     )
   })
@@ -332,7 +369,7 @@ describe('runProvisionNode', () => {
         result: fail('wait_timeout', 'Timed out waiting for project proj-1 to reach "initialized" phase'),
       },
     ])
-    const prompter = fakePrompter()
+    const prompter = fakePrompter({ selects: ['default'] })
     await assert.rejects(
       runProvisionNode(fakeDeps(prompter, runCli), 'cloud-ctx'),
       (err: unknown) => err instanceof QuickstartHalt &&
@@ -355,7 +392,7 @@ describe('runProvisionNode', () => {
       },
     ])
     await assert.rejects(
-      runProvisionNode(fakeDeps(fakePrompter(), runCli), 'cloud-ctx'),
+      runProvisionNode(fakeDeps(fakePrompter({ selects: ['default'] }), runCli), 'cloud-ctx'),
       (err: unknown) => err instanceof QuickstartHalt &&
         err.code === 'context_save_failed' &&
         err.nextSteps.some((s) => s.includes('reset-credentials')),
@@ -391,7 +428,7 @@ describe('runProvisionNode', () => {
       { match: 'cloud serverless projects vector create', result: fail('cloud_api_error', 'quota exceeded') },
     ])
     await assert.rejects(
-      runProvisionNode(fakeDeps(fakePrompter(), runCli), 'cloud-ctx'),
+      runProvisionNode(fakeDeps(fakePrompter({ selects: ['default'] }), runCli), 'cloud-ctx'),
       (err: unknown) => err instanceof QuickstartHalt && err.code === 'provision_failed',
     )
   })
@@ -407,7 +444,7 @@ describe('runProvisionNode', () => {
       },
       mintRoute,
     ])
-    const result = await runProvisionNode(fakeDeps(fakePrompter(), runCli), 'cloud-ctx')
+    const result = await runProvisionNode(fakeDeps(fakePrompter({ selects: ['default'] }), runCli), 'cloud-ctx')
     assert.equal(result.projectName, 'quickstart-2')
   })
 })

@@ -28,6 +28,7 @@ import { resolveConfigPathForWrite } from '../../config/loader.ts'
 import { getSecretStore } from '../../config/secret-store.ts'
 import { DEFAULT_PROJECT_NAME, METADATA_TAGS_BY_TYPE, REGION_PREFERENCE } from '../constants.ts'
 import { mintEsApiKey } from '../es-keys.ts'
+import { hl } from '../prompts.ts'
 import { QuickstartHalt, projectCommandGroup, type ProjectType, type QuickstartDeps } from '../types.ts'
 import type { CliResult } from '../executor.ts'
 
@@ -51,9 +52,27 @@ interface Region {
   project_creation_enabled?: boolean
 }
 
-/** Picks the default region: preference list first, then first creatable. */
-export function pickDefaultRegion (regions: Region[]): Region | undefined {
+/**
+ * Region-id fragments suggested by the machine's IANA timezone — the only
+ * location signal available without a network call (the Cloud public API has
+ * no geolocation endpoint). Best-effort: an empty result falls back to the
+ * static preference list.
+ */
+export function regionFragmentsForTimezone (tz: string | undefined): string[] {
+  if (tz == null || tz === '') return []
+  if (/^(Europe|Africa|Atlantic)\//.test(tz)) return ['eu-west', '-eu-', 'europe']
+  if (/^(Asia|Australia|Indian)\//.test(tz)) return ['ap-southeast', '-ap-', 'asia']
+  if (/^(America|Pacific|US)\//.test(tz)) return ['us-east', '-us-', 'us-central']
+  return []
+}
+
+/** Picks the default region: timezone hint, then preference list, then first creatable. */
+export function pickDefaultRegion (regions: Region[], tzFragments: string[] = []): Region | undefined {
   const creatable = regions.filter((r) => r.project_creation_enabled !== false)
+  for (const fragment of tzFragments) {
+    const hit = creatable.find((r) => r.id.includes(fragment))
+    if (hit != null) return hit
+  }
   for (const preferred of REGION_PREFERENCE) {
     const hit = creatable.find((r) => r.id === preferred)
     if (hit != null) return hit
@@ -93,7 +112,7 @@ export async function runProvisionNode (
     )
   }
   const regions = Array.isArray(regionsResult.data) ? regionsResult.data as unknown as Region[] : []
-  const region = pickDefaultRegion(regions)
+  let region = pickDefaultRegion(regions, regionFragmentsForTimezone(deps.timezone))
   if (region == null) {
     throw new QuickstartHalt(
       'no_region',
@@ -101,7 +120,19 @@ export async function runProvisionNode (
       ['Check connectivity: elastic status', 'List regions: elastic cloud serverless regions list-regions'],
     )
   }
-  prompter.info(`Region: ${region.name ?? region.id} (${region.id}) — chosen for you. A project's region cannot be changed later.`)
+  const regionChoice = await prompter.select('Which region? (a project\'s region cannot be changed later)', [
+    { value: 'default', label: `Default — ${region.name ?? region.id}`, hint: `${region.id}, guessed from your timezone` },
+    { value: 'choose', label: 'Choose my own', hint: 'list every available region' },
+  ])
+  if (regionChoice === 'choose') {
+    const creatable = regions.filter((r) => r.project_creation_enabled !== false)
+    const pickedId = await prompter.select(
+      'Pick a region',
+      creatable.map((r) => ({ value: r.id, label: r.name ?? r.id, hint: r.id })),
+    )
+    region = creatable.find((r) => r.id === pickedId) ?? region
+  }
+  prompter.info(`Region: ${hl.val(region.name ?? region.id)} (${region.id})`)
 
   // Name: default, suffixed past existing projects and contexts. The context
   // written by --save-as shares the project name, so both namespaces count.
@@ -133,14 +164,29 @@ export async function runProvisionNode (
 
   const createProject = async (type: ProjectType): Promise<CliResult> => {
     const label = type === 'vectordb' ? 'Vector DB' : 'Search (optimized for vectors)'
-    const spin = prompter.spinner(`Creating ${label} project "${name}"…`)
+    const base = `Creating ${label} project "${name}" (takes ~2 minutes)…`
+    const spin = prompter.spinner(base)
     const started = Date.now()
-    const result = await runCli(buildCreateArgv(type), {
-      onStderrLine: (line) => {
-        const elapsed = Math.round((Date.now() - started) / 1000)
-        spin.message(`Creating ${label} project "${name}"… ${line.replace(/^Waiting for project\.\.\.\s*/, '')} (${elapsed}s)`)
-      },
-    })
+    // The subprocess only emits a phase line per --wait poll (~10s); a local
+    // ticker keeps the elapsed counter moving every second between polls.
+    let phase = ''
+    const render = (): void => {
+      const elapsed = Math.round((Date.now() - started) / 1000)
+      spin.message(`${base}${phase !== '' ? ` ${phase}` : ''} (${elapsed}s)`)
+    }
+    const ticker = setInterval(render, 1000)
+    ticker.unref()
+    let result: CliResult
+    try {
+      result = await runCli(buildCreateArgv(type), {
+        onStderrLine: (line) => {
+          phase = line.replace(/^Waiting for project\.\.\.\s*/, '')
+          render()
+        },
+      })
+    } finally {
+      clearInterval(ticker)
+    }
     if (result.ok) {
       spin.stop(`${label} project "${name}" is ready.`)
     } else if (type === 'vectordb' && isEntitlementError(result.error?.message)) {

@@ -86,6 +86,39 @@ a swappable Bookshop installer; see direction change 4 for its history).
    selected env; off-prod interactive runs print a targeting banner. QA console
    page paths are derived from the prod paths (base verified, paths not).
 
+## User-directed UX changes (2026-08-25, live-testing round)
+
+1. **Auth interview**: role guidance in the connect note (pick Organization owner
+   on your own account); a paste-vs-local select after the browser opens — the
+   local branch prints the `start-local` one-liner and halts (`local_breakout`);
+   key-probe failures print a generic message naming the failed check
+   (`GET <api>/api/v1/user`); after the key saves, a one-liner explains contexts
+   (`elastic config context list`).
+2. **Region is now asked** (supersedes "defaulted and displayed, never asked"):
+   default guessed from the machine's IANA timezone (the Cloud public API has no
+   geolocation endpoint; `regionFragmentsForTimezone`), with a "Choose my own"
+   escape listing every creatable region. `deps.timezone` keeps tests
+   deterministic.
+3. **Create spinner**: carries a "~2 minutes" estimate and a 1-second local
+   ticker (`--wait` poll lines only arrive every ~10s).
+4. **Value moment is stepwise**: the real commands print first, each phase runs
+   behind a "Press Enter" confirm (decline → `value_skipped` halt carrying the
+   commands), and progress renders as discrete checkmarks.
+5. **Handoff menu restructured**: sample-app install first ("Install the
+   complete sample app to showcase Elastic features"), then "Continue building
+   with my agent/IDE" (submenu of detected agents + "None of these — copy the
+   context document path", best-effort pbcopy), Kibana, done.
+6. **Install seam credential flow inverted**: quickstart mints the per-app key
+   *before* invoking the installer (spinner, failure surfaced with the exact
+   failing command, retry loop, or continue keyless); the payload carries
+   `dedicatedApiKey` instead of a mint capability. Installer directory prompt is
+   a select (full-path home default `~/elastic-bookshop`, suffixed; or custom
+   path with ~ expansion, re-asked while invalid); step output is paced
+   (`STEP_PAUSE_MS`); the closing note links the app repo instead of
+   indices/cost jargon.
+7. **Color highlighting** (`hl` in prompts.ts): commands cyan, values yellow,
+   URLs underlined — TTY-gated so agent mode and tests see plain text.
+
 ## Product decisions made unilaterally (flag if wrong)
 
 1. **BM25 needs a lexical field**, so the index maps `description` (text) with `copy_to`

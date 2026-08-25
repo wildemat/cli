@@ -20,6 +20,24 @@ export class PromptCancelled extends Error {
   constructor () { super('cancelled') }
 }
 
+/** Styles text for the stderr decoration channel; plain when not a TTY. */
+function paint (format: Parameters<typeof styleText>[0], text: string): string {
+  return process.stderr.isTTY === true ? styleText(format, text) : text
+}
+
+/**
+ * Highlight vocabulary for prompt copy: commands cyan, values/names yellow,
+ * URLs underlined, step markers bold. One place so the flow stays consistent.
+ */
+export const hl = {
+  cmd: (s: string): string => paint('cyan', s),
+  val: (s: string): string => paint('yellow', s),
+  url: (s: string): string => paint(['cyan', 'underline'], s),
+  step: (s: string): string => paint('bold', s),
+  ok: (s: string): string => paint('green', s),
+  dim: (s: string): string => paint('dim', s),
+}
+
 export interface SelectOption {
   value: string
   label: string

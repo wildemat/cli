@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadSampleDataset, toNdjson } from '../data/dataset.ts'
 import { DEMO_QUERY, LEXICAL_FIELD, SAMPLE_INDEX, SEMANTIC_FIELD } from '../constants.ts'
+import { hl } from '../prompts.ts'
 import { QuickstartHalt, type ComparisonResult, type QuickstartDeps, type SearchOutcome } from '../types.ts'
 
 export interface ValueResult {
@@ -75,6 +76,28 @@ export async function runValueNode (
   const { prompter, runCli } = deps
   const ctxArgs = ['--use-context', projectContextName]
 
+  // Stepwise: show the real commands first, run them on Enter — the user
+  // should feel each command happen, not watch a wall of output scroll by.
+  const createCmd = `elastic es indices create --index ${SAMPLE_INDEX} --mappings '<${SEMANTIC_FIELD}: semantic_text>' --use-context ${projectContextName}`
+  const ingestCmd = `elastic es helpers bulk-ingest --index ${SAMPLE_INDEX} --data-file books.ndjson --use-context ${projectContextName}`
+  prompter.note(
+    [
+      'One declared field is all vector search needs — embeddings are',
+      'generated automatically at ingest. No ML model to set up.',
+      '',
+      `  ${hl.cmd(createCmd)}`,
+      `  ${hl.cmd(ingestCmd)}`,
+    ].join('\n'),
+    'Let\'s create an index to see the power of vector search',
+  )
+  if (!(await prompter.confirm('Press Enter to run these', true))) {
+    throw new QuickstartHalt('value_skipped', 'Skipped the sample-data step.', [
+      `Run it yourself: ${createCmd}`,
+      `Then: ${ingestCmd}`,
+      'Or re-run: elastic quickstart',
+    ])
+  }
+
   // 1. Create the index. semantic_text auto-embeds at ingest via the default
   //    (EIS) inference endpoint — no model to deploy, nothing to configure.
   const createResult = await runCli([
@@ -98,7 +121,8 @@ export async function runValueNode (
       `Retry: elastic es indices create --index ${SAMPLE_INDEX} --use-context ${projectContextName}`,
     ])
   }
-  prompter.success(`Created index "${SAMPLE_INDEX}" (description → semantic_text, embeddings handled for you)`)
+  prompter.success(`Created index "${hl.val(SAMPLE_INDEX)}"`)
+  prompter.success(`Mapped "${LEXICAL_FIELD}" as ${hl.val('semantic_text')} (auto-embedded at ingest)`)
 
   // 2. Load the sample dataset via the bulk helper.
   const docs = await loadSampleDataset()
@@ -119,11 +143,28 @@ export async function runValueNode (
       `Retry: elastic es helpers bulk-ingest --index ${SAMPLE_INDEX} --data-file ${dataFile} --use-context ${projectContextName}`,
     ])
   }
-  spin.stop(`Indexed ${docs.length} books.`)
+  spin.stop(`Indexed ${docs.length} books — embeddings handled for you, no ML model to set up.`)
 
   await runCli(['es', 'indices', 'refresh', '--index', SAMPLE_INDEX, ...ctxArgs])
 
-  // 3. Same question, two ways.
+  // 3. Same question, two ways — behind its own gate so the payoff lands as
+  //    a deliberate step, not tail output of the setup.
+  const searchCmd = `elastic es search --index ${SAMPLE_INDEX} --use-context ${projectContextName} --input-file <query.json>`
+  prompter.note(
+    [
+      `The same natural-language question, two ways: ${hl.val(`"${DEMO_QUERY}"`)}`,
+      '',
+      `  keyword (BM25):  ${hl.cmd(searchCmd.replace('<query.json>', 'bm25.json'))}`,
+      `  semantic:        ${hl.cmd(searchCmd.replace('<query.json>', 'semantic.json'))}`,
+    ].join('\n'),
+    'Ready. Let\'s prove why vector search matters',
+  )
+  if (!(await prompter.confirm('Press Enter to run the comparison', true))) {
+    throw new QuickstartHalt('value_skipped', 'Skipped the search comparison.', [
+      `Run it yourself: ${searchCmd}`,
+      'Query bodies: {"query":{"match":{"description":{"query":"…"}}}} vs {"query":{"semantic":{"field":"description_semantic","query":"…"}}}',
+    ])
+  }
   const size = 5
   const bm25 = await search(deps, projectContextName, dir, 'bm25', bm25QueryBody(DEMO_QUERY, size))
   const semantic = await search(deps, projectContextName, dir, 'semantic', semanticQueryBody(DEMO_QUERY, size))

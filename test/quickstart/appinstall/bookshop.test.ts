@@ -7,9 +7,10 @@ import { describe, it, afterEach, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { mkdirSync } from 'node:fs'
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { QuickstartDeps } from '../../../src/quickstart/types.ts'
 import {
   bookshopInstaller,
   bookshopAgentGuide,
@@ -52,15 +53,46 @@ function fakeGit (exitCode = 0, stderrText = ''): GitCall[] {
   return calls
 }
 
-function install (script: PromptScript, p: AppInstallPayload = payload()) {
+function install (script: PromptScript, p: AppInstallPayload = payload(), extra: Partial<QuickstartDeps> = {}) {
   const prompter = fakePrompter(script)
-  const deps = fakeDeps(prompter, fakeRunCli([]))
+  const deps = fakeDeps(prompter, fakeRunCli([]), extra)
   return { prompter, run: () => bookshopInstaller.install(p, deps) }
 }
 
-let tmp: string
+/** Routes the spawn seam: git clones create the dir; docker answers from a queue. */
+function fakeProcs (routes: { gitExit?: number, docker?: Array<{ code: number, out?: string }> }): GitCall[] {
+  const calls: GitCall[] = []
+  let dockerIdx = 0
+  _testSetSpawn(((cmd: string, args: string[], opts: Record<string, unknown>) => {
+    calls.push({ cmd, args, opts })
+    const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter, stdout: EventEmitter }
+    child.stderr = new EventEmitter()
+    child.stdout = new EventEmitter()
+    queueMicrotask(() => {
+      if (cmd === 'git') {
+        if ((routes.gitExit ?? 0) === 0) mkdirSync(args[args.length - 1]!, { recursive: true })
+        child.emit('close', routes.gitExit ?? 0)
+        return
+      }
+      const step = (routes.docker ?? [])[dockerIdx++] ?? { code: 0 }
+      if (step.out != null) child.stdout.emit('data', Buffer.from(step.out))
+      child.emit('close', step.code)
+    })
+    return child
+  }) as unknown as Parameters<typeof _testSetSpawn>[0])
+  return calls
+}
 
-before(async () => { tmp = await mkdtemp(join(tmpdir(), 'qs-bookshop-')) })
+let tmp: string
+let dockerBinDir: string
+
+before(async () => {
+  tmp = await mkdtemp(join(tmpdir(), 'qs-bookshop-'))
+  dockerBinDir = join(tmp, 'bins')
+  mkdirSync(dockerBinDir)
+  await writeFile(join(dockerBinDir, 'docker'), '#!/bin/sh\nexit 0\n', 'utf-8')
+  await chmod(join(dockerBinDir, 'docker'), 0o755)
+})
 afterEach(() => { _testSetSpawn(undefined) })
 
 describe('bookshopInstaller.install', () => {
@@ -212,6 +244,61 @@ describe('bookshopInstaller.install', () => {
     assert.equal(outcome.detail, 'installed')
     const env = await readFile(join(target, '.env'), 'utf-8')
     assert.match(env, /ELASTIC_API_KEY=<mint one: elastic es security create-api-key --name elastic-bookshop --use-context quickstart>/)
+  })
+})
+
+describe('bookshopInstaller.install — docker run', () => {
+  it('runs compose up, setup, and the demo search itself, then opens the frontend', async () => {
+    const target = join(tmp, 'docker-happy')
+    const calls = fakeProcs({ docker: [{ code: 0 }, { code: 0 }, { code: 0, out: '1. Anne of Green Gables\n2. David Copperfield\n' }] })
+    const opened: string[] = []
+    const { prompter, run } = install(
+      { selects: ['custom'], texts: [target], confirms: [true] },
+      payload(),
+      { env: { PATH: dockerBinDir }, openBrowser: (url) => { opened.push(url); return true } },
+    )
+    const outcome = await run()
+    assert.deepEqual(outcome, { dir: target, detail: 'installed and started' })
+
+    const dockerCalls = calls.filter((c) => c.cmd === 'docker')
+    assert.deepEqual(dockerCalls.map((c) => c.args.join(' ')), [
+      'compose up --build --detach',
+      'compose exec backend ./bookshop setup --profile demo',
+      'compose exec backend ./bookshop search a story about growing up',
+    ])
+    // Every docker step runs in the install directory, never the cwd.
+    assert.ok(dockerCalls.every((c) => c.opts.cwd === target))
+    assert.ok(prompter.log.some((l) => l.startsWith('note:') && l.includes('Anne of Green Gables')))
+    assert.deepEqual(opened, ['http://localhost:3000'])
+  })
+
+  it('prints the failed command and breaks out to manual instructions when compose up fails', async () => {
+    const target = join(tmp, 'docker-up-fail')
+    fakeProcs({ docker: [{ code: 1, out: 'Cannot connect to the Docker daemon\n' }] })
+    const { prompter, run } = install(
+      { selects: ['custom'], texts: [target], confirms: [true] },
+      payload(),
+      { env: { PATH: dockerBinDir } },
+    )
+    const outcome = await run()
+    assert.deepEqual(outcome, { dir: target, detail: 'installed (docker step failed)' })
+    assert.ok(prompter.log.some((l) => l.startsWith('info:') && l.includes('Cannot connect to the Docker daemon')))
+    assert.ok(prompter.log.some((l) => l.startsWith('warn:') && l.includes('docker compose up --build --detach')))
+    assert.ok(prompter.log.some((l) => l.startsWith('note:Continue the setup yourself')))
+  })
+
+  it('prints the run commands instead when the user declines the docker start', async () => {
+    const target = join(tmp, 'docker-declined')
+    const calls = fakeProcs({})
+    const { prompter, run } = install(
+      { selects: ['custom'], texts: [target], confirms: [false] },
+      payload(),
+      { env: { PATH: dockerBinDir } },
+    )
+    const outcome = await run()
+    assert.deepEqual(outcome, { dir: target, detail: 'installed' })
+    assert.equal(calls.filter((c) => c.cmd === 'docker').length, 0)
+    assert.ok(prompter.log.some((l) => l.startsWith('note:Run the Bookshop app')))
   })
 })
 

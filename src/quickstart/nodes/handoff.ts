@@ -11,15 +11,16 @@
  * instructions, since they cannot accept an injected prompt.
  */
 
-import { accessSync, constants, existsSync } from 'node:fs'
-import { delimiter, join } from 'node:path'
 import spawn from 'cross-spawn'
 import { openBrowser } from '../browser.ts'
 import { buildInstallPayload } from '../appinstall/contract.ts'
 import { bookshopInstaller } from '../appinstall/bookshop.ts'
 import { mintEsApiKey } from '../es-keys.ts'
 import { hl } from '../prompts.ts'
+import { whichBin, type WhichDeps } from '../which.ts'
 import type { QuickstartDeps, QuickstartState } from '../types.ts'
+
+export { whichBin } from '../which.ts'
 
 export interface AgentCandidate {
   id: string
@@ -46,39 +47,8 @@ export interface DetectedAgent extends AgentCandidate {
   binPath: string
 }
 
-interface DetectDeps {
-  env: NodeJS.ProcessEnv
-  platform?: NodeJS.Platform
-}
-
-function isExecutable (p: string): boolean {
-  try {
-    accessSync(p, constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** Resolves `bin` against PATH (with PATHEXT suffixes on Windows). */
-export function whichBin (bin: string, deps: DetectDeps): string | undefined {
-  const platform = deps.platform ?? process.platform
-  const pathVar = deps.env.PATH ?? deps.env.Path ?? ''
-  const exts = platform === 'win32'
-    ? (deps.env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM').split(';').map((e) => e.toLowerCase())
-    : ['']
-  for (const dir of pathVar.split(delimiter)) {
-    if (dir.length === 0) continue
-    for (const ext of exts) {
-      const candidate = join(dir, bin + ext)
-      if (platform === 'win32' ? existsSync(candidate) : isExecutable(candidate)) return candidate
-    }
-  }
-  return undefined
-}
-
 /** Finds installed agents: a PATH hit is required; config dirs corroborate. */
-export function detectAgents (deps: DetectDeps): DetectedAgent[] {
+export function detectAgents (deps: WhichDeps): DetectedAgent[] {
   const found: DetectedAgent[] = []
   for (const agent of KNOWN_AGENTS) {
     const binPath = whichBin(agent.bin, deps)

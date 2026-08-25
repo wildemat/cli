@@ -32,6 +32,8 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import spawn from 'cross-spawn'
 import { DEMO_QUERY, LINKS } from '../constants.ts'
+import type { Prompter } from '../prompts.ts'
+import { whichBin } from '../which.ts'
 import type { QuickstartDeps } from '../types.ts'
 import type { AppInstaller, AppInstallOutcome, AppInstallPayload } from './contract.ts'
 
@@ -94,8 +96,110 @@ async function installBookshop (payload: AppInstallPayload, deps: QuickstartDeps
   prompter.success(`Wrote ${envPath} (0600) with the project connection${key != null ? ' and the app\'s dedicated API key' : ''}.`)
   await deps.sleep(STEP_PAUSE_MS)
 
-  prompter.note(runInstructions(dir, payload), 'Run the Bookshop app (new shell)')
-  return { dir, detail: 'installed' }
+  if (whichBin('docker', { env: deps.env }) == null) {
+    prompter.info('Docker was not found on PATH — start the app yourself once it is installed:')
+    prompter.note(runInstructions(dir, payload), 'Run the Bookshop app (new shell)')
+    return { dir, detail: 'installed' }
+  }
+  if (!(await prompter.confirm('Start the app now with Docker?', true))) {
+    prompter.note(runInstructions(dir, payload), 'Run the Bookshop app (new shell)')
+    return { dir, detail: 'installed' }
+  }
+  return await runAppViaDocker(dir, payload, deps)
+}
+
+/**
+ * Runs the app's own docker steps in the install directory, narrating each.
+ * Any failure prints the failed command plus the process tail and breaks out
+ * to the manual run instructions — never a hard stop.
+ */
+async function runAppViaDocker (dir: string, payload: AppInstallPayload, deps: QuickstartDeps): Promise<AppInstallOutcome> {
+  const { prompter } = deps
+
+  const up = await runDockerStep(dir, ['compose', 'up', '--build', '--detach'], prompter,
+    'Building and starting the app (first build can take several minutes)…')
+  if (!up.ok) return dockerStepFailed(dir, payload, prompter, 'docker compose up --build --detach', up.output)
+  prompter.success('App containers are up (backend :8001, frontend :3000).')
+  await deps.sleep(STEP_PAUSE_MS)
+
+  const setup = await runDockerStep(dir, ['compose', 'exec', 'backend', './bookshop', 'setup', '--profile', PROFILE],
+    prompter, `Loading the demo catalogue (setup --profile ${PROFILE})…`)
+  if (!setup.ok) return dockerStepFailed(dir, payload, prompter, `docker compose exec backend ./bookshop setup --profile ${PROFILE}`, setup.output)
+  prompter.success('Demo catalogue loaded into your project (the app\'s own bookshop-* indices).')
+  await deps.sleep(STEP_PAUSE_MS)
+
+  const query = payload.demoQuery ?? DEMO_QUERY
+  const search = await runDockerStep(dir, ['compose', 'exec', 'backend', './bookshop', 'search', query],
+    prompter, `Searching: "${query}"…`)
+  if (!search.ok) return dockerStepFailed(dir, payload, prompter, `docker compose exec backend ./bookshop search ${shq(query)}`, search.output)
+  if (search.output.trim() !== '') {
+    prompter.note(tailLines(search.output, 15), `./bookshop search ${shq(query)}`)
+  }
+
+  deps.openBrowser(FRONTEND_URL)
+  prompter.success(`The app is running: ${FRONTEND_URL} (self-guided tour at /guide)`)
+  prompter.info(`More about the app: ${LINKS.referenceApp}`)
+  return { dir, detail: 'installed and started' }
+}
+
+function dockerStepFailed (
+  dir: string,
+  payload: AppInstallPayload,
+  prompter: Prompter,
+  command: string,
+  output: string,
+): AppInstallOutcome {
+  const excerpt = tailLines(output, 6)
+  if (excerpt !== '') prompter.info(excerpt)
+  prompter.warn(`That step failed: ${command} (run in ${dir})`)
+  prompter.note(runInstructions(dir, payload), 'Continue the setup yourself (new shell)')
+  return { dir, detail: 'installed (docker step failed)' }
+}
+
+function tailLines (output: string, n: number): string {
+  return output.trim().split('\n').slice(-n).join('\n')
+}
+
+interface DockerStepOutput { ok: boolean, output: string }
+
+/** Spawns docker in `dir`, streaming the last output line under a spinner with a live elapsed counter. */
+async function runDockerStep (dir: string, args: string[], prompter: Prompter, label: string): Promise<DockerStepOutput> {
+  const spin = prompter.spinner(label)
+  const started = Date.now()
+  let lastLine = ''
+  const render = (): void => {
+    const elapsed = Math.round((Date.now() - started) / 1000)
+    spin.message(`${label}${lastLine !== '' ? ` ${lastLine}` : ''} (${elapsed}s)`)
+  }
+  const ticker = setInterval(render, 1000)
+  ticker.unref()
+  const result = await new Promise<DockerStepOutput>((resolvePromise) => {
+    let output = ''
+    let child: ReturnType<SpawnFn>
+    try {
+      child = _spawn('docker', args, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'], shell: false })
+    } catch (err) {
+      resolvePromise({ ok: false, output: err instanceof Error ? err.message : String(err) })
+      return
+    }
+    const onChunk = (chunk: Buffer): void => {
+      output = (output + chunk.toString('utf-8')).slice(-8192)
+      const lines = output.trim().split('\n')
+      const last = lines[lines.length - 1] ?? ''
+      lastLine = last.length > 76 ? `${last.slice(0, 75)}…` : last
+    }
+    child.stdout?.on('data', onChunk)
+    child.stderr?.on('data', onChunk)
+    child.on('error', (err) => resolvePromise({ ok: false, output: `${output}\n${err.message}`.trim() }))
+    child.on('close', (code) => resolvePromise({ ok: code === 0, output }))
+  })
+  clearInterval(ticker)
+  if (result.ok) {
+    spin.stop(`${label} done (${Math.round((Date.now() - started) / 1000)}s)`)
+  } else {
+    spin.fail(`${label} failed`)
+  }
+  return result
 }
 
 /** Leading-tilde home expansion — the prompt is free text, shells don't expand it for us. */

@@ -37,6 +37,31 @@ describe('quickstartHandler in agent mode', () => {
     const result = await quickstartHandler({ options: {} }) as Record<string, JsonValue>
     assert.equal(result.kind, 'elastic-quickstart-runbook')
   })
+
+  it('runbook URLs follow ELASTIC_ENV', async () => {
+    process.env.ELASTIC_ENV = 'qa'
+    try {
+      const result = await quickstartHandler({ options: { json: true } })
+      const serialized = JSON.stringify(result)
+      assert.match(serialized, /public-api\.qa\.cld\.elstc\.co/)
+      assert.match(serialized, /console\.qa\.cld\.elstc\.co/)
+      assert.doesNotMatch(serialized, /api\.elastic-cloud\.com/)
+    } finally {
+      delete process.env.ELASTIC_ENV
+    }
+  })
+
+  it('rejects an unknown ELASTIC_ENV instead of silently targeting prod', async () => {
+    process.env.ELASTIC_ENV = 'staging'
+    try {
+      const result = await quickstartHandler({ options: { json: true } }) as Record<string, JsonValue>
+      const error = result.error as Record<string, JsonValue>
+      assert.equal(error.code, 'bad_env')
+      assert.match(String(error.message), /staging/)
+    } finally {
+      delete process.env.ELASTIC_ENV
+    }
+  })
 })
 
 describe('summary projection', () => {

@@ -12,9 +12,6 @@
  */
 
 import {
-  API_KEYS_URL,
-  CLOUD_API_URL,
-  CREATE_PROJECT_URL,
   DEMO_QUERY,
   LEXICAL_FIELD,
   LINKS,
@@ -22,13 +19,13 @@ import {
   QUICKSTART_SCHEMA_VERSION,
   SAMPLE_INDEX,
   SEMANTIC_FIELD,
-  SIGNUP_URL,
+  type CloudEnv,
 } from './constants.ts'
 import { sampleIndexMappings, bm25QueryBody, semanticQueryBody } from './nodes/value.ts'
 import type { JsonValue } from '../factory.ts'
 
 /** Builds the runbook object emitted in agent mode. */
-export function buildRunbook (): JsonValue {
+export function buildRunbook (cloudEnv: CloudEnv): JsonValue {
   return {
     schema_version: QUICKSTART_SCHEMA_VERSION,
     kind: 'elastic-quickstart-runbook',
@@ -43,9 +40,9 @@ export function buildRunbook (): JsonValue {
         id: 'auth',
         title: 'Connect to Elastic Cloud',
         capability: 'An org API key stored in a named config context; secrets go to the OS keychain, never argv.',
-        ask_user: `Do you already have an Elastic Cloud account and API key? If not, send them to ${SIGNUP_URL} then ${API_KEYS_URL}.`,
+        ask_user: `Do you already have an Elastic Cloud account and API key? If not, send them to ${cloudEnv.signupUrl} then ${cloudEnv.apiKeysUrl}.`,
         commands: [
-          `elastic config context add <name> --cloud-url ${CLOUD_API_URL} --cloud-api-key <key> --json`,
+          `elastic config context add <name> --cloud-url ${cloudEnv.apiUrl} --cloud-api-key <key> --json`,
           'elastic status --json  # probes the cloud block; 401/403 means a bad key',
         ],
         notes: 'If a context with a working cloud api_key already exists, skip this step.',
@@ -61,7 +58,7 @@ export function buildRunbook (): JsonValue {
         ],
         on_failure: {
           '403 projects.create_project.forbidden': `The org is not entitled to Vector DB projects yet. Create a Search project optimized for vectors instead: elastic cloud serverless projects search create --name quickstart --region-id <region> --optimized-for vector --metadata '${JSON.stringify({ tags: METADATA_TAGS_BY_TYPE.elasticsearch })}' --wait --save-as quickstart --json`,
-          fallback_console: CREATE_PROJECT_URL,
+          fallback_console: cloudEnv.createProjectUrl,
         },
       },
       {

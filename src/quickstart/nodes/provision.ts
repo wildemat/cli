@@ -26,7 +26,7 @@ import {
 } from '../../config/writer.ts'
 import { resolveConfigPathForWrite } from '../../config/loader.ts'
 import { getSecretStore } from '../../config/secret-store.ts'
-import { CLOUD_PROJECTS_URL, DEFAULT_PROJECT_NAME, METADATA_TAGS_BY_TYPE, REGION_PREFERENCE } from '../constants.ts'
+import { DEFAULT_PROJECT_NAME, METADATA_TAGS_BY_TYPE, REGION_PREFERENCE } from '../constants.ts'
 import { QuickstartHalt, projectCommandGroup, type ProjectType, type QuickstartDeps } from '../types.ts'
 import type { CliResult } from '../executor.ts'
 
@@ -179,7 +179,7 @@ export async function runProvisionNode (
         'provision_wait_timeout',
         `The project "${name}" was created, but did not finish initializing in time.`,
         [
-          `Find it in the Elastic Cloud console: ${CLOUD_PROJECTS_URL}`,
+          `Find it in the Elastic Cloud console: ${deps.cloudEnv.projectsUrl}`,
           'When it is ready, create an Elasticsearch API key from the project page',
           `Paste it into a context: elastic config context add ${name} --es-url <endpoint from the console> --es-api-key <key>`,
           `Check it works: elastic status --use-context ${name}`,

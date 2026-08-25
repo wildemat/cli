@@ -15,6 +15,7 @@ import { clearConfigCache } from '../../src/config/loader.ts'
 import { _testSetPlatform, _testSetExecSync } from '../../src/config/secret-store.ts'
 import { fakeDeps, fakePrompter, fakeRunCli } from './helpers.ts'
 import type { PromptScript } from './helpers.ts'
+import { CLOUD_ENVS } from '../../src/quickstart/constants.ts'
 import type { QuickstartDeps } from '../../src/quickstart/types.ts'
 
 let dir: string
@@ -62,7 +63,7 @@ describe('runAuthNode — detection', () => {
       'contexts:',
       '  qa-cloud:',
       '    cloud:',
-      '      url: https://cloud.example',
+      '      url: https://api.elastic-cloud.com',
       '      auth:',
       '        api_key: working-key',
     ].join('\n'), 'utf-8')
@@ -82,7 +83,7 @@ describe('runAuthNode — detection', () => {
       '      url: https://es.example',
       '  cloudy:',
       '    cloud:',
-      '      url: https://cloud.example',
+      '      url: https://api.elastic-cloud.com/',
       '      auth:',
       '        api_key: working-key',
     ].join('\n'), 'utf-8')
@@ -90,6 +91,46 @@ describe('runAuthNode — detection', () => {
 
     const result = await runAuthNode(authDeps({}, 'working-key'))
     assert.equal(result.cloudContextName, 'cloudy')
+    assert.equal(result.reused, true)
+  })
+
+  it('never reuses a context pointing at a different environment', async () => {
+    await writeFile(configFile, [
+      'current_context: qa-cloud',
+      'contexts:',
+      '  qa-cloud:',
+      '    cloud:',
+      '      url: https://public-api.qa.cld.elstc.co',
+      '      auth:',
+      '        api_key: working-key',
+    ].join('\n'), 'utf-8')
+    await chmod(configFile, 0o600)
+
+    // Same key answers, but the context targets QA while deps say prod —
+    // detection must fall through to the paste flow.
+    const result = await runAuthNode(authDeps({ passwords: ['working-key'] }, 'working-key'))
+    assert.equal(result.cloudContextName, 'elastic-cloud')
+    assert.equal(result.reused, false)
+  })
+
+  it('reuses a QA context when ELASTIC_ENV selects qa', async () => {
+    await writeFile(configFile, [
+      'current_context: qa-cloud',
+      'contexts:',
+      '  qa-cloud:',
+      '    cloud:',
+      '      url: https://public-api.qa.cld.elstc.co',
+      '      auth:',
+      '        api_key: working-key',
+    ].join('\n'), 'utf-8')
+    await chmod(configFile, 0o600)
+
+    const deps = fakeDeps(fakePrompter({}), fakeRunCli([]), {
+      fetchFn: fetchForKey('working-key'),
+      cloudEnv: CLOUD_ENVS.qa,
+    })
+    const result = await runAuthNode(deps)
+    assert.equal(result.cloudContextName, 'qa-cloud')
     assert.equal(result.reused, true)
   })
 })
@@ -152,6 +193,23 @@ describe('runAuthNode — paste flow', () => {
         err.code === 'auth_failed' &&
         err.nextSteps.some((s) => s.includes('elastic config')),
     )
+  })
+
+  it('pastes against QA and persists the QA cloud url when ELASTIC_ENV selects qa', async () => {
+    const prompter = fakePrompter({ passwords: ['fresh-key'] })
+    let openedUrl = ''
+    const deps = fakeDeps(prompter, fakeRunCli([]), {
+      fetchFn: fetchForKey('fresh-key'),
+      cloudEnv: CLOUD_ENVS.qa,
+      openBrowser: (url) => { openedUrl = url; return true },
+    })
+    await runAuthNode(deps)
+    assert.match(openedUrl, /^https:\/\/console\.qa\.cld\.elstc\.co\//)
+
+    const written = parseYaml(await readFile(configFile, 'utf-8')) as {
+      contexts: Record<string, { cloud: { url: string } }>
+    }
+    assert.equal(written.contexts['elastic-cloud']!.cloud.url, 'https://public-api.qa.cld.elstc.co')
   })
 
   it('prints signup and API-key URLs as text (browser may fail silently)', async () => {

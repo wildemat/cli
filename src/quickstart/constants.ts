@@ -19,20 +19,53 @@ export const QUICKSTART_SCHEMA_VERSION = 1
 /** Default serverless project (and context) name; suffixed -2, -3 on collision. */
 export const DEFAULT_PROJECT_NAME = 'quickstart'
 
-/** Cloud control-plane API for newly-authored contexts. */
-export const CLOUD_API_URL = 'https://api.elastic-cloud.com'
+/** Cloud environment selected via ELASTIC_ENV (dev/demo switch; prod for users). */
+export type CloudEnvName = 'prod' | 'qa'
 
-/** Trial signup page (attribution params pending product owner). */
-export const SIGNUP_URL = 'https://cloud.elastic.co/registration'
+/** Every environment-dependent URL: the control-plane API and console pages. */
+export interface CloudEnv {
+  name: CloudEnvName
+  /** Cloud control-plane API for probes and newly-authored contexts. */
+  apiUrl: string
+  /** Trial signup page (attribution params pending product owner). */
+  signupUrl: string
+  /** Where an existing user mints an organization API key. */
+  apiKeysUrl: string
+  /** One-click console fallback for creating the project manually. */
+  createProjectUrl: string
+  /** Console home for serverless projects (find/manage an existing project). */
+  projectsUrl: string
+}
 
-/** Where an existing user mints an organization API key. */
-export const API_KEYS_URL = 'https://cloud.elastic.co/account/keys'
+function cloudEnv (name: CloudEnvName, apiUrl: string, consoleUrl: string): CloudEnv {
+  return {
+    name,
+    apiUrl,
+    signupUrl: `${consoleUrl}/registration`,
+    apiKeysUrl: `${consoleUrl}/account/keys`,
+    createProjectUrl: `${consoleUrl}/projects/create/elasticsearch?use_case=vector_search`,
+    projectsUrl: `${consoleUrl}/projects`,
+  }
+}
 
-/** One-click console fallback for creating the project manually. */
-export const CREATE_PROJECT_URL = 'https://cloud.elastic.co/projects/create/elasticsearch?use_case=vector_search'
+export const CLOUD_ENVS: Record<CloudEnvName, CloudEnv> = {
+  prod: cloudEnv('prod', 'https://api.elastic-cloud.com', 'https://cloud.elastic.co'),
+  qa: cloudEnv('qa', 'https://public-api.qa.cld.elstc.co', 'https://console.qa.cld.elstc.co'),
+}
 
-/** Console home for serverless projects (find/manage an existing project). */
-export const CLOUD_PROJECTS_URL = 'https://cloud.elastic.co/projects'
+/**
+ * Resolves ELASTIC_ENV ("prod" default, "qa"; case-insensitive) to its URL
+ * set. Unknown values throw rather than silently targeting prod.
+ */
+export function resolveCloudEnv (env: NodeJS.ProcessEnv): CloudEnv {
+  const raw = (env['ELASTIC_ENV'] ?? '').trim().toLowerCase()
+  if (raw === '') return CLOUD_ENVS.prod
+  const resolved = (CLOUD_ENVS as Record<string, CloudEnv>)[raw]
+  if (resolved == null) {
+    throw new Error(`Unknown ELASTIC_ENV "${env['ELASTIC_ENV']}" — expected "prod" or "qa" (unset defaults to prod)`)
+  }
+  return resolved
+}
 
 /** Sample index name — matches the docs quickstart's books dataset. */
 export const SAMPLE_INDEX = 'books'

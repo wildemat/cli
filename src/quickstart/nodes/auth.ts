@@ -25,7 +25,6 @@ import {
   hasInlineSecrets,
 } from '../../config/writer.ts'
 import { getSecretStore } from '../../config/secret-store.ts'
-import { CLOUD_API_URL, SIGNUP_URL, API_KEYS_URL } from '../constants.ts'
 import { QuickstartHalt, type QuickstartDeps } from '../types.ts'
 
 const KEYCHAIN_SERVICE = 'elastic-cli'
@@ -49,24 +48,25 @@ export async function runAuthNode (deps: QuickstartDeps): Promise<AuthResult> {
     return { cloudContextName: detected, reused: true }
   }
 
+  const { signupUrl, apiKeysUrl, apiUrl } = deps.cloudEnv
   deps.prompter.note(
     [
       'You need an Elastic Cloud account and an organization API key.',
       '',
-      `  Sign up (free trial):  ${SIGNUP_URL}`,
-      `  Create an API key:     ${API_KEYS_URL}`,
+      `  Sign up (free trial):  ${signupUrl}`,
+      `  Create an API key:     ${apiKeysUrl}`,
     ].join('\n'),
     'Connect to Elastic Cloud',
   )
-  const opened = deps.openBrowser(API_KEYS_URL)
+  const opened = deps.openBrowser(apiKeysUrl)
   if (opened) deps.prompter.info('Opened your browser (links above if it did not appear).')
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     const key = (await deps.prompter.password('Paste your Elastic Cloud API key')).trim()
     if (key.length === 0) continue
-    const probe = await checkCloud({ url: CLOUD_API_URL, auth: { api_key: key } }, deps.fetchFn)
+    const probe = await checkCloud({ url: apiUrl, auth: { api_key: key } }, deps.fetchFn)
     if (probe.ok) {
-      const contextName = await persistCloudKey(key)
+      const contextName = await persistCloudKey(key, apiUrl)
       deps.prompter.success(`API key verified and saved to context "${contextName}" (secret stored securely)`)
       return { cloudContextName: contextName, reused: false }
     }
@@ -77,17 +77,26 @@ export async function runAuthNode (deps: QuickstartDeps): Promise<AuthResult> {
     'auth_failed',
     'Could not verify an Elastic Cloud API key.',
     [
-      `Create a key at ${API_KEYS_URL}`,
-      `Then configure it manually: elastic config context add elastic-cloud --cloud-url ${CLOUD_API_URL} --cloud-api-key <key>`,
+      `Create a key at ${apiKeysUrl}`,
+      `Then configure it manually: elastic config context add elastic-cloud --cloud-url ${apiUrl} --cloud-api-key <key>`,
       'Re-run: elastic quickstart',
     ],
   )
 }
 
+/** Trailing-slash/case-insensitive URL equality for cloud-block matching. */
+function sameCloudUrl (a: string | undefined, b: string): boolean {
+  if (a == null) return false
+  const norm = (u: string): string => u.trim().replace(/\/+$/, '').toLowerCase()
+  return norm(a) === norm(b)
+}
+
 /**
  * Returns the name of a context whose cloud block answers an authenticated
  * probe, or undefined. Checks the active context first, then any other
- * context that has a cloud block.
+ * context that has a cloud block. Only contexts pointing at the selected
+ * environment's API count — a prod context must never satisfy an
+ * ELASTIC_ENV=qa run (or vice versa).
  */
 async function detectExistingCloudContext (deps: QuickstartDeps): Promise<string | undefined> {
   const active = await loadConfig()
@@ -116,6 +125,7 @@ async function detectExistingCloudContext (deps: QuickstartDeps): Promise<string
     if (!resolved.ok) continue
     const cloud = resolved.value.context.cloud
     if (cloud?.auth == null || !('api_key' in cloud.auth)) continue
+    if (!sameCloudUrl(cloud.url, deps.cloudEnv.apiUrl)) continue
     const probe = await checkCloud(cloud, deps.fetchFn)
     if (probe.ok) return name
   }
@@ -127,7 +137,7 @@ async function detectExistingCloudContext (deps: QuickstartDeps): Promise<string
  * holds a `$(keychain:...)` expression when an OS store is available, the
  * plain value (0600 file) otherwise.
  */
-async function persistCloudKey (apiKey: string): Promise<string> {
+async function persistCloudKey (apiKey: string, cloudApiUrl: string): Promise<string> {
   const contextName = DEFAULT_CLOUD_CONTEXT
   const configPath = await resolveConfigPathForWrite()
   const config = await readRawConfig(configPath)
@@ -147,7 +157,7 @@ async function persistCloudKey (apiKey: string): Promise<string> {
   // kibana blocks (and keychain references) that must survive a re-auth.
   let next = upsertContext(config, contextName, {
     ...config.contexts[contextName],
-    cloud: { url: CLOUD_API_URL, auth: { api_key: keyValue } },
+    cloud: { url: cloudApiUrl, auth: { api_key: keyValue } },
   })
   if (next.current_context === '') {
     next = { ...next, current_context: contextName }

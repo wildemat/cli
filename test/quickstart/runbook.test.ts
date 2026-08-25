@@ -6,6 +6,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildRunbook } from '../../src/quickstart/runbook.ts'
+import { CLOUD_ENVS } from '../../src/quickstart/constants.ts'
 
 interface Step {
   id: string
@@ -15,7 +16,7 @@ interface Step {
 }
 
 describe('buildRunbook', () => {
-  const runbook = buildRunbook() as Record<string, unknown>
+  const runbook = buildRunbook(CLOUD_ENVS.prod) as Record<string, unknown>
   const steps = runbook.steps as Step[]
 
   it('is a versioned, self-describing contract', () => {

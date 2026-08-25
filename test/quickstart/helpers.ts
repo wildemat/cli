@@ -8,6 +8,7 @@
 import type { Prompter, SelectOption, Spinner } from '../../src/quickstart/prompts.ts'
 import type { CliResult, RunCli, RunCliOptions } from '../../src/quickstart/executor.ts'
 import type { QuickstartDeps } from '../../src/quickstart/types.ts'
+import { CLOUD_ENVS } from '../../src/quickstart/constants.ts'
 
 export interface PromptScript {
   /** Values returned by select prompts, in order. */
@@ -115,6 +116,7 @@ export function fakeDeps (prompter: Prompter, runCli: RunCli, extra: Partial<Qui
     fetchFn: (async () => { throw new Error('unexpected fetch') }) as unknown as typeof fetch,
     openBrowser: () => true,
     env: {},
+    cloudEnv: CLOUD_ENVS.prod,
     sleep: async () => {},
     ...extra,
   }

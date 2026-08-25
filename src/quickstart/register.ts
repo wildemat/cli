@@ -14,6 +14,7 @@
 
 import { defineCommand } from '../factory.ts'
 import type { JsonValue, OpaqueCommandHandle, ParsedResult } from '../factory.ts'
+import { resolveCloudEnv, type CloudEnv } from './constants.ts'
 import { detectMode } from './mode.ts'
 import { buildRunbook } from './runbook.ts'
 import { runCli } from './executor.ts'
@@ -22,13 +23,14 @@ import { openBrowser } from './browser.ts'
 import type { QuickstartDeps, QuickstartState } from './types.ts'
 import { QuickstartHalt } from './types.ts'
 
-function productionDeps (): QuickstartDeps {
+function productionDeps (cloudEnv: CloudEnv): QuickstartDeps {
   return {
     runCli,
     prompter: createPrompter(),
     fetchFn: globalThis.fetch,
     openBrowser,
     env: process.env,
+    cloudEnv,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   }
 }
@@ -78,14 +80,24 @@ export async function quickstartHandler (parsed: ParsedResult): Promise<JsonValu
   const jsonFlag = parsed.options['json'] === true
   const mode = detectMode(jsonFlag)
 
-  if (mode === 'agent') {
-    return buildRunbook()
+  let cloudEnv: CloudEnv
+  try {
+    cloudEnv = resolveCloudEnv(process.env)
+  } catch (err) {
+    return { error: { code: 'bad_env', message: (err as Error).message } }
   }
 
-  const deps = productionDeps()
+  if (mode === 'agent') {
+    return buildRunbook(cloudEnv)
+  }
+
+  const deps = productionDeps(cloudEnv)
   const { walkFlow } = await import('./tree.ts')
 
   deps.prompter.intro('elastic quickstart — vector search in minutes')
+  if (cloudEnv.name !== 'prod') {
+    deps.prompter.warn(`ELASTIC_ENV=${cloudEnv.name} — targeting ${cloudEnv.apiUrl}`)
+  }
   try {
     const state = await walkFlow(deps)
     deps.prompter.outro('You\'re set up. The summary below is yours to keep.')

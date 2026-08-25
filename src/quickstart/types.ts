@@ -11,6 +11,7 @@
 
 import type { RunCli } from './executor.ts'
 import type { Prompter } from './prompts.ts'
+import type { CloudEnv } from './constants.ts'
 
 /** Deployment target seam — one value in v1; local lands as a fast follow. */
 export type DeploymentTarget = 'cloud-serverless'
@@ -35,6 +36,8 @@ export interface QuickstartDeps {
   fetchFn: typeof fetch
   openBrowser: (url: string) => boolean
   env: NodeJS.ProcessEnv
+  /** URL set for the ELASTIC_ENV-selected Cloud environment. */
+  cloudEnv: CloudEnv
   /** Sleep, injectable so retry loops are instant under test. */
   sleep: (ms: number) => Promise<void>
 }

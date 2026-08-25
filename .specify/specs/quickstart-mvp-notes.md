@@ -7,8 +7,9 @@ Cloud org (`console.qa.cld.elstc.co`). Companion to the quickstart PRD.
 
 PRD build steps 1–13: `vectordb` project type wiring, `quickstart` scaffold, mode
 detection, subprocess executor, `@clack/prompts` layer, tree + interpreter + runbook
-projection, auth/provision/verify/value/context-doc/handoff nodes, and the throwaway
-Bookshop installer (`src/quickstart/refapp/`, with its deletion contract in the header).
+projection, auth/provision/verify/value/context-doc/handoff nodes, and the sample-app
+install seam (`src/quickstart/appinstall/` — a persistent neutral-payload contract plus
+a swappable Bookshop installer; see direction change 4 for its history).
 
 ## Bugs found in existing code (fixed on this branch)
 
@@ -64,11 +65,26 @@ Bookshop installer (`src/quickstart/refapp/`, with its deletion contract in the 
    The handoff doc never contains the key; agents reference credentials by running
    commands with `--use-context`. Kibana keeps the basic-auth pair. Mint failure warns
    and continues on basic auth. Apps should mint their own dedicated keys.
-4. **In-band reference-app installer removed** (its deletion contract executed). The
-   Bookshop app remains as agent-handoff guidance in the context doc and runbook.
-5. **No environment forking.** The paste path defaults to the public prod Cloud API;
-   any other target (QA today, prod at launch) is simply a context whose `cloud.url`
-   points elsewhere — detection picks it up. Cutover is a config value, not code.
+4. **In-band reference-app installer removed, then reinstated as a seam** (`208499b`).
+   The throwaway `refapp/` installer's deletion contract was executed; guidance-only
+   handoff survived one iteration, then the installer returned as two sides of one
+   seam: `appinstall/contract.ts` (persistent — neutral payload of endpoints, names,
+   demo query, and a `mintDedicatedKey` capability that is the *only* credential an
+   installer can obtain; context/org credentials never cross the boundary) and
+   `appinstall/bookshop.ts` (swappable — repo URL, env-var names, run commands, with
+   a header swap contract and a single import in `nodes/handoff.ts`). It clones and
+   seeds `.env` (0600) but never runs the app; failures downgrade to manual
+   instructions. When the generalised third-party contract lands (PRD fast follow
+   #16), the payload gains a `schema_version` and becomes the published surface.
+5. **Environment forking via `ELASTIC_ENV`** (2026-08-25, user-directed; supersedes
+   the earlier "no environment forking" decision). `resolveCloudEnv` in
+   `quickstart/constants.ts` maps `ELASTIC_ENV` (unset/`prod` default, `qa`;
+   case-insensitive; unknown → hard `bad_env` error, never a silent prod fallback)
+   to a `CloudEnv` URL set (API + console pages) carried on `QuickstartDeps`.
+   The paste path probes and persists the selected env's API; runbook and console
+   links follow; auth detection only reuses contexts whose `cloud.url` matches the
+   selected env; off-prod interactive runs print a targeting banner. QA console
+   page paths are derived from the prod paths (base verified, paths not).
 
 ## Product decisions made unilaterally (flag if wrong)
 
@@ -96,7 +112,8 @@ Bookshop installer (`src/quickstart/refapp/`, with its deletion contract in the 
 ## Known sharp edges (not fixed, by scope)
 
 - **`--save-as` stores basic auth**, so the context doc tells agents to mint an API key
-  for real apps; the refapp installer already mints one (`es security create-api-key`).
+  for real apps; the Bookshop installer already mints one via the payload's
+  `mintDedicatedKey` (`es security create-api-key`).
 - **Re-run creates a new project** (PRD explicitly excludes re-run detection). Cost
   guard: name suffixing + delete instructions in the context doc.
 - **The handoff prompt-as-argv convention** (`claude "<prompt>"`) is verified for

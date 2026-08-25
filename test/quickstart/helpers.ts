@@ -16,6 +16,8 @@ export interface PromptScript {
   confirms?: boolean[]
   /** Values returned by password prompts, in order. */
   passwords?: string[]
+  /** Values returned by text prompts, in order. */
+  texts?: string[]
 }
 
 export interface RecordedPrompter extends Prompter {
@@ -28,6 +30,7 @@ export function fakePrompter (script: PromptScript = {}): RecordedPrompter {
   const selects = [...(script.selects ?? [])]
   const confirms = [...(script.confirms ?? [])]
   const passwords = [...(script.passwords ?? [])]
+  const texts = [...(script.texts ?? [])]
   const spinner = (message: string): Spinner => {
     log.push(`spinner:${message}`)
     return {
@@ -60,6 +63,12 @@ export function fakePrompter (script: PromptScript = {}): RecordedPrompter {
       log.push(`password:${message}`)
       const next = passwords.shift()
       if (next == null) throw new Error(`unscripted password: ${message}`)
+      return next
+    },
+    text: async (message: string, initial?: string) => {
+      log.push(`text:${message}:${initial ?? ''}`)
+      const next = texts.shift()
+      if (next == null) throw new Error(`unscripted text: ${message}`)
       return next
     },
     spinner,

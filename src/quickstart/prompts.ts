@@ -47,6 +47,7 @@ export interface Prompter {
   select (message: string, options: SelectOption[]): Promise<string>
   confirm (message: string, initial?: boolean): Promise<boolean>
   password (message: string): Promise<string>
+  text (message: string, initial?: string): Promise<string>
   spinner (message: string): Spinner
 }
 
@@ -58,6 +59,7 @@ interface ClackLike {
   select: typeof clack.select
   confirm: typeof clack.confirm
   password: typeof clack.password
+  text: typeof clack.text
   spinner: typeof clack.spinner
   isCancel: typeof clack.isCancel
 }
@@ -88,6 +90,9 @@ export function createPrompter (): Prompter {
     select: async (message, options) => unwrap(await _clack.select({ message, options, output })),
     confirm: async (message, initial = true) => unwrap(await _clack.confirm({ message, initialValue: initial, output })),
     password: async (message) => unwrap(await _clack.password({ message, output })),
+    text: async (message, initial) => unwrap(
+      await _clack.text({ message, ...(initial != null ? { initialValue: initial } : {}), output }),
+    ) ?? '',
     spinner: (message) => {
       const s = _clack.spinner({ output })
       s.start(message)

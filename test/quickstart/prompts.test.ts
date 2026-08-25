@@ -15,11 +15,12 @@ const CANCEL = Symbol('cancel')
 
 interface FakeClackCall { fn: string, args: unknown[] }
 
-function fakeClack (script: { select?: unknown[], confirm?: unknown[], password?: unknown[] }) {
+function fakeClack (script: { select?: unknown[], confirm?: unknown[], password?: unknown[], text?: unknown[] }) {
   const calls: FakeClackCall[] = []
   const selects = [...(script.select ?? [])]
   const confirms = [...(script.confirm ?? [])]
   const passwords = [...(script.password ?? [])]
+  const texts = [...(script.text ?? [])]
 
   const impl = {
     intro: (...args: unknown[]) => { calls.push({ fn: 'intro', args }) },
@@ -35,6 +36,7 @@ function fakeClack (script: { select?: unknown[], confirm?: unknown[], password?
     select: async (opts: unknown) => { calls.push({ fn: 'select', args: [opts] }); return selects.shift() },
     confirm: async (opts: unknown) => { calls.push({ fn: 'confirm', args: [opts] }); return confirms.shift() },
     password: async (opts: unknown) => { calls.push({ fn: 'password', args: [opts] }); return passwords.shift() },
+    text: async (opts: unknown) => { calls.push({ fn: 'text', args: [opts] }); return texts.shift() },
     spinner: () => {
       const events: string[] = []
       calls.push({ fn: 'spinner', args: [events] })
@@ -57,14 +59,25 @@ describe('quickstart prompter', () => {
   afterEach(() => { _testSetClack(undefined) })
 
   it('returns scripted values and draws on stderr', async () => {
-    const { impl, calls } = fakeClack({ select: ['a'], confirm: [true], password: ['key'] })
+    const { impl, calls } = fakeClack({ select: ['a'], confirm: [true], password: ['key'], text: ['./dir'] })
     _testSetClack(impl)
     const p = createPrompter()
     assert.equal(await p.select('q', [{ value: 'a', label: 'A' }]), 'a')
     assert.equal(await p.confirm('sure?'), true)
     assert.equal(await p.password('paste'), 'key')
+    assert.equal(await p.text('where?', './default'), './dir')
     const selectCall = calls.find((c) => c.fn === 'select')!
     assert.equal((selectCall.args[0] as { output: unknown }).output, process.stderr)
+    const textCall = calls.find((c) => c.fn === 'text')!
+    assert.equal((textCall.args[0] as { initialValue?: string }).initialValue, './default')
+  })
+
+  it('text tolerates a missing initial value and an empty submission', async () => {
+    const { impl, calls } = fakeClack({ text: [undefined] })
+    _testSetClack(impl)
+    const p = createPrompter()
+    assert.equal(await p.text('where?'), '')
+    assert.equal('initialValue' in (calls[0]!.args[0] as object), false)
   })
 
   it('throws PromptCancelled on Ctrl-C', async () => {

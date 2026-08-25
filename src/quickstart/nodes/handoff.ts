@@ -15,6 +15,8 @@ import { accessSync, constants, existsSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import spawn from 'cross-spawn'
 import { openBrowser } from '../browser.ts'
+import { buildInstallPayload } from '../appinstall/contract.ts'
+import { bookshopInstaller } from '../appinstall/bookshop.ts'
 import type { QuickstartDeps, QuickstartState } from '../types.ts'
 
 export interface AgentCandidate {
@@ -127,17 +129,24 @@ export async function runHandoffNode (
   )
 
   const agents = detectAgents({ env: deps.env })
+  const installValue = `install:${bookshopInstaller.id}`
   const options = [
     ...agents.map((a) => ({
       value: `agent:${a.id}`,
       label: `Hand off to ${a.label}`,
       hint: a.kind === 'ide' ? 'opens the workspace; paste the prompt' : 'launches with the context doc',
     })),
+    { value: installValue, label: bookshopInstaller.label, hint: bookshopInstaller.hint },
     ...(kibanaUrl != null ? [{ value: 'kibana', label: 'Open Kibana', hint: 'explore the books index in the UI' }] : []),
     { value: 'done', label: 'I\'m done — just leave the summary', hint: 'everything above stays in your scrollback' },
   ]
 
   const choice = await prompter.select('Keep building — how do you want to continue?', options)
+
+  if (choice === installValue) {
+    const outcome = await bookshopInstaller.install(buildInstallPayload(state, deps), deps)
+    return { choice: installValue, detail: outcome.detail }
+  }
 
   if (choice === 'kibana' && kibanaUrl != null) {
     _openBrowser(kibanaUrl)

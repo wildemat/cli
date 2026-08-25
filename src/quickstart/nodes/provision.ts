@@ -27,6 +27,7 @@ import {
 import { resolveConfigPathForWrite } from '../../config/loader.ts'
 import { getSecretStore } from '../../config/secret-store.ts'
 import { DEFAULT_PROJECT_NAME, METADATA_TAGS_BY_TYPE, REGION_PREFERENCE } from '../constants.ts'
+import { mintEsApiKey } from '../es-keys.ts'
 import { QuickstartHalt, projectCommandGroup, type ProjectType, type QuickstartDeps } from '../types.ts'
 import type { CliResult } from '../executor.ts'
 
@@ -249,13 +250,7 @@ async function mintContextApiKey (deps: QuickstartDeps, contextName: string): Pr
   const spin = prompter.spinner('Minting an Elasticsearch API key…')
 
   for (let attempt = 1; attempt <= MINT_MAX_ATTEMPTS; attempt++) {
-    const result = await runCli([
-      'es', 'security', 'create-api-key',
-      '--name', `${contextName}-quickstart`,
-      '--use-context', contextName,
-    ])
-    const keyBody = (result.data ?? {}) as { encoded?: string, api_key?: string }
-    const encoded = keyBody.encoded ?? keyBody.api_key
+    const { result, encoded } = await mintEsApiKey(runCli, `${contextName}-quickstart`, contextName)
     if (result.ok && encoded != null) {
       if (await storeMintedKey(contextName, encoded)) {
         spin.stop(`Minted an Elasticsearch API key and stored it in context "${contextName}"`)

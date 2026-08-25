@@ -136,7 +136,11 @@ export async function runHandoffNode (
       label: `Hand off to ${a.label}`,
       hint: a.kind === 'ide' ? 'opens the workspace; paste the prompt' : 'launches with the context doc',
     })),
-    { value: installValue, label: bookshopInstaller.label, hint: bookshopInstaller.hint },
+    // Gated like Kibana: without an ES endpoint the installer could only
+    // write an empty connection into the app's .env.
+    ...(state.endpoints?.elasticsearch != null
+      ? [{ value: installValue, label: bookshopInstaller.label, hint: bookshopInstaller.hint }]
+      : []),
     ...(kibanaUrl != null ? [{ value: 'kibana', label: 'Open Kibana', hint: 'explore the books index in the UI' }] : []),
     { value: 'done', label: 'I\'m done — just leave the summary', hint: 'everything above stays in your scrollback' },
   ]

@@ -8,15 +8,17 @@
  * (https://github.com/elastic/search-reference-app).
  *
  * v1 of the install seam is deliberately bound to this one app. Everything
- * app-specific is hardcoded HERE and nowhere else: repo URL, the app's own
- * env-var names (ELASTICSEARCH_URL / ELASTIC_API_KEY — not the docs'
- * ES_URL, not the extension contract's ELASTIC_ES_URL), profile, ports, and
- * run commands. The persistent side (contract.ts, the handoff fork) sees
- * only the neutral payload.
+ * app-specific lives HERE and nowhere else: the app's own env-var names
+ * (ELASTICSEARCH_URL / ELASTIC_API_KEY — not the docs' ES_URL, not the
+ * extension contract's ELASTIC_ES_URL), profile, ports, and run commands.
+ * The persistent side (contract.ts, the handoff fork) sees only the
+ * neutral payload.
  *
  * Swap procedure: replace this module (or add siblings) behind the
- * AppInstaller interface; the single import lives in ../nodes/handoff.ts.
- * Nothing else may depend on this module.
+ * AppInstaller interface. Imports live only in ../nodes/handoff.ts (the
+ * interactive fork) and ../runbook.ts (the agent projection, via
+ * {@link bookshopAgentGuide} so both stay on one contract). Nothing else
+ * may depend on this module.
  *
  * It clones and configures but never runs the app — the user gets
  * copy-paste commands for a fresh shell. Data-plane only: the app talks to
@@ -26,13 +28,15 @@
 
 import { existsSync } from 'node:fs'
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import spawn from 'cross-spawn'
+import { DEMO_QUERY, LINKS } from '../constants.ts'
 import type { Prompter } from '../prompts.ts'
 import type { QuickstartDeps } from '../types.ts'
 import type { AppInstaller, AppInstallOutcome, AppInstallPayload } from './contract.ts'
 
-const REPO_URL = 'https://github.com/elastic/search-reference-app.git'
+const REPO_URL = `${LINKS.referenceApp}.git`
 const DEFAULT_DIR = 'elastic-bookshop'
 const APP_KEY_NAME = 'elastic-bookshop'
 /** Never `hybrid` — 21k books, far slower to set up. */
@@ -80,19 +84,38 @@ async function installBookshop (payload: AppInstallPayload, deps: QuickstartDeps
   }
 
   const envPath = join(dir, '.env')
-  await writeFile(envPath, envFileContent(payload, key), { encoding: 'utf-8', mode: 0o600 })
+  try {
+    await writeFile(envPath, envFileContent(payload, key), { encoding: 'utf-8', mode: 0o600 })
+  } catch (err) {
+    prompter.warn(`Could not write ${envPath}: ${err instanceof Error ? err.message : String(err)}`)
+    if (key != null) {
+      prompter.warn(`An unused API key named "${APP_KEY_NAME}" was minted for the app — delete it in Kibana (Stack Management → API keys) or reuse the name when installing manually.`)
+    }
+    prompter.info(manualInstructions(payload))
+    return { detail: '.env write failed' }
+  }
   prompter.success(`Wrote ${envPath} (0600) with the project connection.`)
 
   prompter.note(runInstructions(dir, payload), 'Run the Bookshop app (new shell)')
   return { dir, detail: 'installed' }
 }
 
+/** Leading-tilde home expansion — the prompt is free text, shells don't expand it for us. */
+function expandTilde (p: string): string {
+  if (p === '~') return homedir()
+  if (p.startsWith('~/')) return join(homedir(), p.slice(2))
+  return p
+}
+
 /** Asks for a new or empty target directory; undefined after 3 misses. */
 async function pickTargetDir (prompter: Prompter): Promise<string | undefined> {
   for (let attempt = 1; attempt <= DIR_ATTEMPTS; attempt++) {
     const raw = (await prompter.text('Where should Elastic Bookshop be installed?', DEFAULT_DIR)).trim()
-    if (raw.length === 0) continue
-    const dir = resolve(raw)
+    if (raw.length === 0) {
+      prompter.warn('No path entered — a new or empty directory is required.')
+      continue
+    }
+    const dir = resolve(expandTilde(raw))
     if (!existsSync(dir)) return dir
     try {
       if ((await readdir(dir)).length === 0) return dir
@@ -105,7 +128,12 @@ async function pickTargetDir (prompter: Prompter): Promise<string | undefined> {
 }
 
 async function runGitClone (dir: string): Promise<{ ok: boolean, detail?: string }> {
-  await mkdir(dirname(dir), { recursive: true })
+  // Never throws: any failure here must reach the caller's downgrade path.
+  try {
+    await mkdir(dirname(dir), { recursive: true })
+  } catch (err) {
+    return { ok: false, detail: err instanceof Error ? err.message : String(err) }
+  }
   return await new Promise((resolvePromise) => {
     let child: ReturnType<SpawnFn>
     try {
@@ -146,19 +174,53 @@ export function envFileContent (payload: AppInstallPayload, apiKey: string | und
   return lines.join('\n') + '\n'
 }
 
+/** Single-quotes a value for copy-paste shell safety; plain paths stay bare. */
+function shq (s: string): string {
+  if (/^[A-Za-z0-9_./~-]+$/.test(s)) return s
+  return `'${s.replaceAll("'", "'\\''")}'`
+}
+
 /** Copy-paste commands for a fresh shell; the installer never runs these. */
 export function runInstructions (dir: string, payload: AppInstallPayload): string {
-  const query = payload.demoQuery ?? 'a story about growing up'
+  const query = payload.demoQuery ?? DEMO_QUERY
   return [
-    `cd ${dir}`,
+    `cd ${shq(dir)}`,
     'docker compose up --build --detach   # backend :8001, frontend :3000',
     `docker compose exec backend ./bookshop setup --profile ${PROFILE}`,
-    `docker compose exec backend ./bookshop search "${query}"`,
+    `docker compose exec backend ./bookshop search ${shq(query)}`,
     `Open ${FRONTEND_URL} — self-guided tour at /guide`,
     '',
     `The app sets up its own bookshop-* indices in your project${payload.indexName != null ? `; the "${payload.indexName}" index is untouched` : ''}.`,
     'Keep it on localhost — publicly reachable inference routes can run up cost.',
   ].join('\n')
+}
+
+/**
+ * The agent-runbook projection of the same app contract. Lives here so the
+ * runbook can never drift from the installer on env-var names, profile, or
+ * run commands.
+ */
+export function bookshopAgentGuide (): Record<string, unknown> {
+  return {
+    title: 'Optional: run the Elastic Bookshop demo app against the project',
+    repo: LINKS.referenceApp,
+    notes: `The app runs on the user's machine and points at the project — nothing deploys into Elastic Cloud. Its .env uses the APP's variable names (not ES_URL, not ELASTIC_ES_URL). Keep the ${PROFILE} profile; never hybrid (21k books, slow).`,
+    env: {
+      ELASTICSEARCH_URL: '<elasticsearch endpoint from the context>',
+      ELASTIC_API_KEY: `<mint with: elastic es security create-api-key --name ${APP_KEY_NAME} --use-context quickstart --json>`,
+      KIBANA_URL: '<kibana endpoint from the context, optional>',
+      BOOKSHOP_PROFILE: PROFILE,
+    },
+    commands: [
+      `git clone ${REPO_URL} ${DEFAULT_DIR}`,
+      `cd ${DEFAULT_DIR} && <write .env with the vars above, mode 0600>`,
+      'docker compose up --build --detach   # backend :8001, frontend :3000',
+      `docker compose exec backend ./bookshop setup --profile ${PROFILE}`,
+      `docker compose exec backend ./bookshop search ${shq(DEMO_QUERY)}`,
+      `open ${FRONTEND_URL} — self-guided tour at /guide`,
+    ],
+    caveat: 'Beyond localhost, publicly reachable agent/inference routes can run up cost against the user\'s API key — see the repo\'s DEPLOYMENT.md.',
+  }
 }
 
 function manualInstructions (payload: AppInstallPayload): string {

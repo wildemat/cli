@@ -111,6 +111,14 @@ describe('runHandoffNode', () => {
     assert.ok(prompter.log.some((l) => l.includes('elastic status --use-context quickstart')))
   })
 
+  it('hides the sample-app option when the state has no elasticsearch endpoint', async () => {
+    const prompter = fakePrompter({ selects: ['done'] })
+    const state = { ...STATE, endpoints: {} }
+    await runHandoffNode(fakeDeps(prompter, fakeRunCli([]), { env: { PATH: binDir } }), state)
+    const selectLine = prompter.log.find((l) => l.startsWith('select:'))!
+    assert.doesNotMatch(selectLine, /install:bookshop/)
+  })
+
   it('spawns a terminal agent with the @file prompt as one argument', async () => {
     const spawned = spawnRecorder(0)
     const prompter = fakePrompter({ selects: ['agent:claude'] })

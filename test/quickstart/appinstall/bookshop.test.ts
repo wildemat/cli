@@ -8,10 +8,11 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { mkdirSync } from 'node:fs'
 import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   bookshopInstaller,
+  bookshopAgentGuide,
   envFileContent,
   runInstructions,
   _testSetSpawn,
@@ -105,13 +106,52 @@ describe('bookshopInstaller.install', () => {
     const filePath = join(tmp, 'a-file')
     await writeFile(filePath, 'x', 'utf-8')
 
-    const { prompter, run } = install({ texts: [filePath, '', filePath, filePath] })
+    const { prompter, run } = install({ texts: [filePath, '', filePath] })
     const outcome = await run()
     assert.deepEqual(outcome, { detail: 'no directory chosen' })
     assert.ok(prompter.log.some((l) => l.startsWith('warn:') && l.includes('not a directory')))
+    assert.ok(prompter.log.some((l) => l.startsWith('warn:') && l.includes('No path entered')))
     const info = prompter.log.find((l) => l.startsWith('info:'))!
     assert.match(info, /git clone/)
     assert.match(info, /ELASTIC_API_KEY=<mint one:/)
+  })
+
+  it('expands a leading ~ against the home directory', async () => {
+    // The home dir exists and is non-empty, so the expanded path shows up in
+    // the "not empty" warning without the test writing anywhere real. The
+    // failing fake git is a backstop in case a bare home dir ever accepts.
+    fakeGit(1)
+    const { prompter, run } = install({ texts: ['~', '', ''] })
+    await run()
+    assert.ok(prompter.log.some((l) => l.startsWith('warn:') && l.includes(homedir()) && !l.includes('~')))
+  })
+
+  it('downgrades a mkdir failure (file as parent) to manual instructions', async () => {
+    const fileParent = join(tmp, 'parent-file')
+    await writeFile(fileParent, 'x', 'utf-8')
+    fakeGit(0)
+    const { prompter, run } = install({ texts: [join(fileParent, 'child')] })
+    const outcome = await run()
+    assert.deepEqual(outcome, { detail: 'clone failed' })
+    assert.ok(prompter.log.some((l) => l.startsWith('spinner-fail:')))
+    assert.ok(prompter.log.some((l) => l.startsWith('info:') && l.includes('git clone')))
+  })
+
+  it('downgrades a .env write failure and flags the already-minted key', async () => {
+    const target = join(tmp, 'env-write-fail')
+    // Clone "succeeds" without creating the directory, so the .env write fails.
+    _testSetSpawn((() => {
+      const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter }
+      child.stderr = new EventEmitter()
+      queueMicrotask(() => child.emit('close', 0))
+      return child
+    }) as unknown as Parameters<typeof _testSetSpawn>[0])
+    const { prompter, run } = install({ texts: [target] })
+    const outcome = await run()
+    assert.deepEqual(outcome, { detail: '.env write failed' })
+    assert.ok(prompter.log.some((l) => l.startsWith('warn:') && l.includes('Could not write')))
+    assert.ok(prompter.log.some((l) => l.startsWith('warn:') && l.includes('unused API key')))
+    assert.ok(prompter.log.some((l) => l.startsWith('info:') && l.includes('git clone')))
   })
 
   it('downgrades a failed clone to manual instructions', async () => {
@@ -177,5 +217,25 @@ describe('envFileContent / runInstructions', () => {
     const text = runInstructions('/x', p)
     assert.match(text, /a story about growing up/)
     assert.doesNotMatch(text, /"books" index/)
+  })
+
+  it('shell-quotes paths and queries so the printed commands survive a paste', () => {
+    const text = runInstructions('/Users/me/My Projects/bookshop', payload({ demoQuery: 'a "coming of age" story' }))
+    assert.match(text, /^cd '\/Users\/me\/My Projects\/bookshop'$/m)
+    assert.match(text, /search 'a "coming of age" story'$/m)
+    // A plain path stays unquoted for readability.
+    assert.match(runInstructions('/x/bookshop', payload()), /^cd \/x\/bookshop$/m)
+  })
+})
+
+describe('bookshopAgentGuide', () => {
+  it('carries the same app contract as the installer', () => {
+    const guide = bookshopAgentGuide()
+    const env = guide.env as Record<string, string>
+    assert.deepEqual(Object.keys(env), ['ELASTICSEARCH_URL', 'ELASTIC_API_KEY', 'KIBANA_URL', 'BOOKSHOP_PROFILE'])
+    assert.equal(env.BOOKSHOP_PROFILE, 'demo')
+    const commands = guide.commands as string[]
+    assert.ok(commands.some((c) => c.includes('git clone') && c.includes('search-reference-app')))
+    assert.ok(commands.some((c) => c.includes('setup --profile demo')))
   })
 })

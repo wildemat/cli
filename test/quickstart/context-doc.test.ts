@@ -21,7 +21,7 @@ const STATE: QuickstartState = {
   endpoints: { elasticsearch: 'https://es.example', kibana: 'https://kb.example' },
   indexName: 'books',
   docsIndexed: 74,
-  demoQuery: 'a story about growing up',
+  demoQuery: 'a story about a girl growing up',
 }
 
 describe('renderContextDoc', () => {
@@ -45,7 +45,7 @@ describe('renderContextDoc', () => {
 
   it('carries the demo queries, next steps, and cost/cleanup guidance', () => {
     const doc = renderContextDoc(STATE)
-    assert.match(doc, /"a story about growing up"/)
+    assert.match(doc, /"a story about a girl growing up"/)
     assert.match(doc, /semantic/)
     assert.match(doc, /Hybrid search/)
     assert.match(doc, /delete/)

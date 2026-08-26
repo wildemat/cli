@@ -9,9 +9,9 @@
  * Books, to match the docs quickstart and the Elastic Bookshop reference app
  * (`description` is the semantic field; `title` and `release_year` support
  * full-text search and aggregation). Descriptions are deliberately written so
- * the demo query ("a story about growing up") matches coming-of-age books on
+ * the demo query ("a story about a girl growing up") matches coming-of-age books on
  * *meaning* while BM25 latches onto incidental keyword overlap elsewhere
- * (titles and blurbs containing "story" or "growing" that are not
+ * (titles and blurbs containing "story", "girl", or "growing" that are not
  * coming-of-age books at all).
  *
  * Final dataset content/hosting is an open product dependency; swap via the
@@ -47,7 +47,7 @@ export const BOOKS: BookDoc[] = [
   { title: 'Are You There God? It\'s Me, Margaret', author: 'Judy Blume', release_year: 1970, genre: 'young-adult', description: 'Sixth-grader Margaret negotiates a new town, first bras, first crushes, and two religions in frank conversations with God about becoming a teenager.' },
   { title: 'Lord of the Flies', author: 'William Golding', release_year: 1954, genre: 'classic', description: 'Marooned schoolboys build their own society on an empty island, and the veneer of civilization peels away from childhood with terrifying speed.' },
 
-  // --- BM25 decoys: "story" / "growing" / "about" in unrelated books ---
+  // --- BM25 decoys: "story" / "growing" / "girl" in unrelated books ---
   { title: 'The Neverending Story', author: 'Michael Ende', release_year: 1979, genre: 'fantasy', description: 'A bullied boy steals a mysterious book and is drawn into Fantastica, a dying realm of luckdragons and empresses that only a human wish can save.' },
   { title: 'Love Story', author: 'Erich Segal', release_year: 1970, genre: 'romance', description: 'A wealthy Harvard jock and a sharp-tongued music student marry against his father\'s wishes, and their charmed marriage meets a devastating diagnosis.' },
   { title: 'The Hidden Life of Trees', author: 'Peter Wohlleben', release_year: 2015, genre: 'nonfiction', description: 'A forester explains how trees communicate through root networks, share nutrients, and keep growing for centuries in surprisingly social forests.' },

@@ -122,6 +122,16 @@ async function runAppViaDocker (dir: string, payload: AppInstallPayload, deps: Q
   prompter.success('App containers are up (backend :8001, frontend :3000).')
   await deps.sleep(STEP_PAUSE_MS)
 
+  // Upstream .dockerignore excludes evaluation/, but cli/main.py imports the
+  // evaluate command at startup — so every ./bookshop invocation dies inside
+  // the image. The tree is present on a fresh checkout; copy it in. No fork
+  // of the reference app required.
+  if (existsSync(join(dir, 'evaluation'))) {
+    const cp = await runDockerStep(dir, ['compose', 'cp', 'evaluation', 'backend:/app/evaluation'],
+      prompter, 'Preparing the bookshop CLI inside the container…')
+    if (!cp.ok) return dockerStepFailed(dir, payload, prompter, 'docker compose cp evaluation backend:/app/evaluation', cp.output)
+  }
+
   const setup = await runDockerStep(dir, ['compose', 'exec', 'backend', './bookshop', 'setup', '--profile', PROFILE],
     prompter, `Loading the demo catalogue (setup --profile ${PROFILE})…`)
   if (!setup.ok) return dockerStepFailed(dir, payload, prompter, `docker compose exec backend ./bookshop setup --profile ${PROFILE}`, setup.output)
@@ -129,11 +139,27 @@ async function runAppViaDocker (dir: string, payload: AppInstallPayload, deps: Q
   await deps.sleep(STEP_PAUSE_MS)
 
   const query = payload.demoQuery ?? DEMO_QUERY
-  const search = await runDockerStep(dir, ['compose', 'exec', 'backend', './bookshop', 'search', query],
-    prompter, `Searching: "${query}"…`)
-  if (!search.ok) return dockerStepFailed(dir, payload, prompter, `docker compose exec backend ./bookshop search ${shq(query)}`, search.output)
+  // Bare `./bookshop search` defaults to --strategy all, which runs every
+  // demo strategy including `reranked` (text_similarity_reranker). That second
+  // inference pass routinely 429s on EIS during the first-run demo; hybrid is
+  // the profile default and enough to prove the app talks to the project.
+  const search = await runDockerStep(
+    dir,
+    ['compose', 'exec', 'backend', './bookshop', 'search', '--strategy', 'hybrid', query],
+    prompter,
+    `Searching: "${query}"…`,
+  )
+  if (!search.ok) {
+    return dockerStepFailed(
+      dir,
+      payload,
+      prompter,
+      `docker compose exec backend ./bookshop search --strategy hybrid ${shq(query)}`,
+      search.output,
+    )
+  }
   if (search.output.trim() !== '') {
-    prompter.note(tailLines(search.output, 15), `./bookshop search ${shq(query)}`)
+    prompter.note(tailLines(search.output, 15), `./bookshop search --strategy hybrid ${shq(query)}`)
   }
 
   deps.openBrowser(FRONTEND_URL)
@@ -316,8 +342,10 @@ export function runInstructions (dir: string, payload: AppInstallPayload): strin
   return [
     `cd ${shq(dir)}`,
     'docker compose up --build --detach   # backend :8001, frontend :3000',
+    // evaluation/ is dockerignored upstream but required by ./bookshop at import time.
+    'docker compose cp evaluation backend:/app/evaluation',
     `docker compose exec backend ./bookshop setup --profile ${PROFILE}`,
-    `docker compose exec backend ./bookshop search ${shq(query)}`,
+    `docker compose exec backend ./bookshop search --strategy hybrid ${shq(query)}`,
     `Open ${FRONTEND_URL} — self-guided tour at /guide`,
     '',
     `More about the app: ${LINKS.referenceApp}`,
@@ -344,8 +372,9 @@ export function bookshopAgentGuide (): Record<string, unknown> {
       `git clone ${REPO_URL} ${DEFAULT_DIR}`,
       `cd ${DEFAULT_DIR} && <write .env with the vars above, mode 0600>`,
       'docker compose up --build --detach   # backend :8001, frontend :3000',
+      'docker compose cp evaluation backend:/app/evaluation',
       `docker compose exec backend ./bookshop setup --profile ${PROFILE}`,
-      `docker compose exec backend ./bookshop search ${shq(DEMO_QUERY)}`,
+      `docker compose exec backend ./bookshop search --strategy hybrid ${shq(DEMO_QUERY)}`,
       `open ${FRONTEND_URL} — self-guided tour at /guide`,
     ],
     caveat: 'Beyond localhost, publicly reachable agent/inference routes can run up cost against the user\'s API key — see the repo\'s DEPLOYMENT.md.',
@@ -363,6 +392,6 @@ function manualInstructions (payload: AppInstallPayload): string {
     `  cd ${DEFAULT_DIR}`,
     '  Write .env (mode 0600) with:',
     ...envLines,
-    `  Then: docker compose up --build --detach && docker compose exec backend ./bookshop setup --profile ${PROFILE}`,
+    `  Then: docker compose up --build --detach && docker compose cp evaluation backend:/app/evaluation && docker compose exec backend ./bookshop setup --profile ${PROFILE}`,
   ].join('\n')
 }

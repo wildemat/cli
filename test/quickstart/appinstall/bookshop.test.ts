@@ -27,7 +27,7 @@ function payload (overrides: Partial<AppInstallPayload> = {}): AppInstallPayload
     contextName: 'quickstart',
     endpoints: { elasticsearch: 'https://es.example', kibana: 'https://kb.example' },
     indexName: 'books',
-    demoQuery: 'a story about growing up',
+    demoQuery: 'a story about a girl growing up',
     projectType: 'vectordb',
     dedicatedApiKey: 'encoded-key',
     ...overrides,
@@ -70,7 +70,12 @@ function fakeProcs (routes: { gitExit?: number, docker?: Array<{ code: number, o
     child.stdout = new EventEmitter()
     queueMicrotask(() => {
       if (cmd === 'git') {
-        if ((routes.gitExit ?? 0) === 0) mkdirSync(args[args.length - 1]!, { recursive: true })
+        if ((routes.gitExit ?? 0) === 0) {
+          const dest = args[args.length - 1]!
+          mkdirSync(dest, { recursive: true })
+          // Mirrors a real clone: evaluation/ is on disk but dockerignored out of the image.
+          mkdirSync(join(dest, 'evaluation'), { recursive: true })
+        }
         child.emit('close', routes.gitExit ?? 0)
         return
       }
@@ -117,7 +122,7 @@ describe('bookshopInstaller.install', () => {
     const note = prompter.log.find((l) => l.startsWith('note:'))!
     assert.match(note, /docker compose up --build --detach/)
     assert.match(note, /setup --profile demo/)
-    assert.match(note, /a story about growing up/)
+    assert.match(note, /a story about a girl growing up/)
     // Plain pointer for newcomers instead of indices/cost jargon.
     assert.match(note, /More about the app: https:\/\/github\.com\/elastic\/search-reference-app/)
   })
@@ -250,7 +255,7 @@ describe('bookshopInstaller.install', () => {
 describe('bookshopInstaller.install — docker run', () => {
   it('runs compose up, setup, and the demo search itself, then opens the frontend', async () => {
     const target = join(tmp, 'docker-happy')
-    const calls = fakeProcs({ docker: [{ code: 0 }, { code: 0 }, { code: 0, out: '1. Anne of Green Gables\n2. David Copperfield\n' }] })
+    const calls = fakeProcs({ docker: [{ code: 0 }, { code: 0 }, { code: 0 }, { code: 0, out: '1. Anne of Green Gables\n2. David Copperfield\n' }] })
     const opened: string[] = []
     const { prompter, run } = install(
       { selects: ['custom'], texts: [target], confirms: [true] },
@@ -263,8 +268,13 @@ describe('bookshopInstaller.install — docker run', () => {
     const dockerCalls = calls.filter((c) => c.cmd === 'docker')
     assert.deepEqual(dockerCalls.map((c) => c.args.join(' ')), [
       'compose up --build --detach',
+      // Upstream .dockerignore excludes evaluation/, but ./bookshop imports it
+      // at startup — copy the host checkout's copy into the running container.
+      'compose cp evaluation backend:/app/evaluation',
       'compose exec backend ./bookshop setup --profile demo',
-      'compose exec backend ./bookshop search a story about growing up',
+      // Explicit hybrid: bare `search` defaults to --strategy all, which runs
+      // reranked and 429s on EIS capacity during the demo.
+      'compose exec backend ./bookshop search --strategy hybrid a story about a girl growing up',
     ])
     // Every docker step runs in the install directory, never the cwd.
     assert.ok(dockerCalls.every((c) => c.opts.cwd === target))
@@ -313,7 +323,8 @@ describe('envFileContent / runInstructions', () => {
     delete (p as Partial<AppInstallPayload>).indexName
     delete (p as Partial<AppInstallPayload>).demoQuery
     const text = runInstructions('/x', p)
-    assert.match(text, /a story about growing up/)
+    assert.match(text, /a story about a girl growing up/)
+    assert.match(text, /compose cp evaluation backend:\/app\/evaluation/)
     assert.doesNotMatch(text, /"books" index/)
   })
 

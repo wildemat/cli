@@ -34,6 +34,8 @@ export const hl = {
   val: (s: string): string => paint('yellow', s),
   url: (s: string): string => paint(['cyan', 'underline'], s),
   step: (s: string): string => paint('bold', s),
+  /** Column / section headers in multi-line notes. */
+  head: (s: string): string => paint(['bold', 'cyan'], s),
   ok: (s: string): string => paint('green', s),
   dim: (s: string): string => paint('dim', s),
 }

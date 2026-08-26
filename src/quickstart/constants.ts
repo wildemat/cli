@@ -77,11 +77,11 @@ export const LEXICAL_FIELD = 'description'
 export const SEMANTIC_FIELD = 'description_semantic'
 
 /**
- * The proof-of-value query. Phrased so BM25 visibly whiffs: the sample
- * descriptions express the concept without using these words, while common
- * terms ("story") match irrelevant books.
+ * The proof-of-value query. Phrased so BM25 visibly whiffs: "story" /
+ * "growing" / "girl" latch onto plant memoirs and titles (Lab Girl), while
+ * coming-of-age blurbs express the same idea without those words.
  */
-export const DEMO_QUERY = 'a story about growing up'
+export const DEMO_QUERY = 'a story about a girl growing up'
 
 /**
  * Tags attached to created projects via --metadata (server-side funnel).

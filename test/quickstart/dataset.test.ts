@@ -37,9 +37,10 @@ describe('sample dataset', () => {
         `"${doc.title}" contains the demo query verbatim`,
       )
     }
-    // But BM25 must have keyword bait ("story"/"growing" in unrelated books)…
+    // But BM25 must have keyword bait ("story"/"growing"/"girl" in unrelated books)…
     assert.ok(docs.some((d) => `${d.title} ${d.description}`.toLowerCase().includes('story')))
     assert.ok(docs.some((d) => d.description.toLowerCase().includes('growing')))
+    assert.ok(docs.some((d) => d.title.toLowerCase().includes('girl')))
     // …and the semantic side has real coming-of-age material.
     assert.ok(docs.some((d) => d.description.toLowerCase().includes('coming of age') ||
       d.description.toLowerCase().includes('comes of age') ||

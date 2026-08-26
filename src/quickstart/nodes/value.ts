@@ -171,7 +171,7 @@ export async function runValueNode (
 
   const comparison: ComparisonResult = { query: DEMO_QUERY, bm25, semantic }
   prompter.note(renderComparison(comparison), `"${DEMO_QUERY}" — keyword vs meaning`)
-  prompter.info('Semantic search matches meaning; keyword (BM25) search needs the words to match. Hybrid search combines both.')
+  prompter.info('Semantic search matched on meaning — none of those hits need your exact words. Keyword (BM25) latched onto "story", "girl", and "growing".')
 
   return { indexName: SAMPLE_INDEX, docsIndexed: docs.length, comparison }
 }
@@ -207,8 +207,11 @@ export function renderComparison (comparison: ComparisonResult): string {
   const width = 34
   const rows = Math.max(comparison.bm25.hits.length, comparison.semantic.hits.length)
   const lines: string[] = []
+  // Pad on the bare string — ANSI from hl.* would inflate .length and skew columns.
   const pad = (s: string): string => s.length > width ? s.slice(0, width - 1) + '…' : s.padEnd(width)
-  lines.push(`${pad(`Keyword (BM25) — ${comparison.bm25.tookMs}ms`)} │ Semantic — ${comparison.semantic.tookMs}ms`)
+  const leftHead = pad(`Keyword (BM25) — ${comparison.bm25.tookMs}ms`)
+  const rightHead = `Semantic — ${comparison.semantic.tookMs}ms`
+  lines.push(`${hl.head(leftHead)} │ ${hl.head(rightHead)}`)
   lines.push(`${'─'.repeat(width)}─┼─${'─'.repeat(width)}`)
   for (let i = 0; i < rows; i++) {
     const left = comparison.bm25.hits[i]
@@ -218,5 +221,7 @@ export function renderComparison (comparison: ComparisonResult): string {
     lines.push(`${pad(l)} │ ${r}`)
   }
   if (comparison.bm25.hits.length === 0) lines.push('(keyword search found nothing — the words never appear)')
+  lines.push('')
+  lines.push('Score in parentheses.')
   return lines.join('\n')
 }

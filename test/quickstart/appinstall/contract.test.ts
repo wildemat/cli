@@ -14,7 +14,7 @@ const STATE: QuickstartState = {
   projectType: 'elasticsearch',
   endpoints: { elasticsearch: 'https://es.example', kibana: 'https://kb.example' },
   indexName: 'books',
-  demoQuery: 'a story about growing up',
+  demoQuery: 'a story about a girl growing up',
 }
 
 describe('buildInstallPayload', () => {
@@ -23,7 +23,7 @@ describe('buildInstallPayload', () => {
     assert.equal(payload.contextName, 'quickstart')
     assert.deepEqual(payload.endpoints, { elasticsearch: 'https://es.example', kibana: 'https://kb.example' })
     assert.equal(payload.indexName, 'books')
-    assert.equal(payload.demoQuery, 'a story about growing up')
+    assert.equal(payload.demoQuery, 'a story about a girl growing up')
     assert.equal(payload.projectType, 'elasticsearch')
     assert.equal(payload.dedicatedApiKey, 'enc-123')
   })

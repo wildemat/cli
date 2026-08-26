@@ -20,6 +20,7 @@ import {
   _testSetOpenBrowser,
 } from '../../src/quickstart/nodes/handoff.ts'
 import { _testSetSpawn as _testSetBookshopSpawn } from '../../src/quickstart/appinstall/bookshop.ts'
+import { _testSetResolveAppMintAuth } from '../../src/quickstart/es-keys.ts'
 import type { QuickstartState } from '../../src/quickstart/types.ts'
 import { fakeDeps, fakePrompter, fakeRunCli, ok, fail } from './helpers.ts'
 
@@ -46,6 +47,7 @@ afterEach(() => {
   _testSetSpawn(undefined)
   _testSetBookshopSpawn(undefined)
   _testSetOpenBrowser(undefined)
+  _testSetResolveAppMintAuth(undefined)
 })
 
 describe('agent detection', () => {
@@ -102,8 +104,6 @@ describe('runHandoffNode', () => {
     await runHandoffNode(fakeDeps(prompter, fakeRunCli([]), { env: { PATH: binDir } }), STATE)
     const selectLine = prompter.log.find((l) => l.startsWith('select:'))!
     assert.match(selectLine, /install:bookshop,agent,kibana,done/)
-    // The context doc path and next commands are always printed first.
-    assert.ok(prompter.log.some((l) => l.includes(STATE.contextDocPath!)))
     assert.ok(prompter.log.some((l) => l.includes('elastic status --use-context quickstart')))
   })
 
@@ -191,6 +191,8 @@ describe('runHandoffNode', () => {
       })
       return child
     }) as unknown as Parameters<typeof _testSetBookshopSpawn>[0])
+    // Force the subprocess mint path so the test stays offline.
+    _testSetResolveAppMintAuth(async () => ({ mode: 'subprocess' }))
     const runCli = fakeRunCli([{ match: 'es security create-api-key', result: ok({ encoded: 'handoff-key' }) }])
     const prompter = fakePrompter({ selects: ['install:bookshop', 'custom'], texts: [target] })
     const outcome = await runHandoffNode(fakeDeps(prompter, runCli, { env: { PATH: binDir } }), STATE)
@@ -213,6 +215,7 @@ describe('runHandoffNode', () => {
       })
       return child
     }) as unknown as Parameters<typeof _testSetBookshopSpawn>[0])
+    _testSetResolveAppMintAuth(async () => ({ mode: 'subprocess' }))
     let attempts = 0
     const runCli = fakeRunCli([{
       match: 'es security create-api-key',

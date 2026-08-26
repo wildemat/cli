@@ -53,6 +53,7 @@ describe('renderComparison', () => {
     assert.match(out, /Semantic — 34ms/)
     assert.match(out, /1\. The Story of Art \(2\.10\)/)
     assert.match(out, /2\. Little Women \(0\.80\)/)
+    assert.match(out, /Score in parentheses/)
   })
 
   it('says so when keyword search finds nothing', () => {

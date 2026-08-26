@@ -51,7 +51,7 @@ export function renderContextDoc (state: QuickstartState): string {
 
   const ctx = state.projectContextName ?? '<context>'
   const index = state.indexName ?? 'books'
-  const demo = state.demoQuery ?? state.comparison?.query ?? 'a story about growing up'
+  const demo = state.demoQuery ?? state.comparison?.query ?? 'a story about a girl growing up'
   const group = projectCommandGroup(state.projectType ?? 'vectordb')
 
   const body = `# Elastic quickstart — handoff context

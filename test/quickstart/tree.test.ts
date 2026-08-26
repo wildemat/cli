@@ -24,6 +24,14 @@ describe('buildFlow', () => {
       ],
     )
   })
+
+  it('opts journey steps into the agent runbook; context-doc stays interactive-only', () => {
+    const byId = Object.fromEntries(buildFlow().map((n) => [n.id, n]))
+    for (const id of ['auth', 'provision', 'verify', 'value', 'handoff']) {
+      assert.ok(byId[id]?.agent != null, `${id} must declare agent metadata`)
+    }
+    assert.equal(byId['context-doc']?.agent, undefined)
+  })
 })
 
 describe('walkFlow', () => {

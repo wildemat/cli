@@ -331,7 +331,7 @@ describe('envFileContent / runInstructions', () => {
   it('shell-quotes paths and queries so the printed commands survive a paste', () => {
     const text = runInstructions('/Users/me/My Projects/bookshop', payload({ demoQuery: 'a "coming of age" story' }))
     assert.match(text, /^cd '\/Users\/me\/My Projects\/bookshop'$/m)
-    assert.match(text, /search 'a "coming of age" story'$/m)
+    assert.match(text, /search --strategy hybrid 'a "coming of age" story'$/m)
     // A plain path stays unquoted for readability.
     assert.match(runInstructions('/x/bookshop', payload()), /^cd \/x\/bookshop$/m)
   })

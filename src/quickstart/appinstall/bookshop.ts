@@ -353,9 +353,9 @@ export function runInstructions (dir: string, payload: AppInstallPayload): strin
 }
 
 /**
- * The agent-runbook projection of the same app contract. Lives here so the
- * runbook can never drift from the installer on env-var names, profile, or
- * run commands.
+ * The agent-runbook projection of the same app contract. Lives here so
+ * translate() can never drift from the installer on env-var names, profile,
+ * or run commands.
  */
 export function bookshopAgentGuide (): Record<string, unknown> {
   return {

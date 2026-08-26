@@ -4,29 +4,53 @@
  */
 
 /**
- * Agent-mode projection: the whole flow emitted once as a goal-oriented
- * runbook. The agent interviews its own user and runs the listed commands
- * directly — it never re-invokes `elastic quickstart`. Only this projection
- * (stamped with `schema_version`) is a published contract; the internal tree
- * stays private and free to change.
+ * Agent-mode projection: translate flow nodes that declare an `agent` block
+ * into a goal-oriented runbook. The agent interviews its own user and runs
+ * the listed commands directly — it never re-invokes `elastic quickstart`.
+ * Only this projection (stamped with `schema_version`) is a published
+ * contract; the internal tree stays private and free to change.
+ *
+ * See `AGENTS.md` in this directory for how nodes opt into this translation.
  */
 
 import {
-  DEMO_QUERY,
-  LEXICAL_FIELD,
   LINKS,
-  METADATA_TAGS_BY_TYPE,
   QUICKSTART_SCHEMA_VERSION,
-  SAMPLE_INDEX,
-  SEMANTIC_FIELD,
   type CloudEnv,
 } from './constants.ts'
 import { bookshopAgentGuide } from './appinstall/bookshop.ts'
-import { sampleIndexMappings, bm25QueryBody, semanticQueryBody } from './nodes/value.ts'
+import { buildFlow, type AgentField, type FlowNode, type FlowNodeAgent } from './tree.ts'
 import type { JsonValue } from '../factory.ts'
 
-/** Builds the runbook object emitted in agent mode. */
-export function buildRunbook (cloudEnv: CloudEnv): JsonValue {
+function resolveAgentField<T> (field: AgentField<T>, env: CloudEnv): T {
+  return typeof field === 'function' ? (field as (env: CloudEnv) => T)(env) : field
+}
+
+/** Maps one opted-in node to a runbook step object. */
+function translateStep (node: FlowNode & { agent: FlowNodeAgent }, env: CloudEnv): Record<string, JsonValue> {
+  const { agent } = node
+  const step: Record<string, JsonValue> = {
+    id: node.id,
+    title: agent.title ?? node.title,
+    capability: resolveAgentField(agent.capability, env),
+  }
+  if (agent.ask_user != null) step.ask_user = resolveAgentField(agent.ask_user, env)
+  if (agent.commands != null) step.commands = resolveAgentField(agent.commands, env)
+  if (agent.on_failure != null) step.on_failure = resolveAgentField(agent.on_failure, env)
+  if (agent.notes != null) step.notes = resolveAgentField(agent.notes, env)
+  if (agent.extras != null) Object.assign(step, resolveAgentField(agent.extras, env))
+  return step
+}
+
+/**
+ * Builds the runbook from a flow. Nodes without an `agent` block are omitted
+ * (interactive-only). Envelope fields (goal, links, reference_app) live here.
+ */
+export function translate (nodes: FlowNode[], cloudEnv: CloudEnv): JsonValue {
+  const steps = nodes
+    .filter((n): n is FlowNode & { agent: FlowNodeAgent } => n.agent != null)
+    .map((n) => translateStep(n, cloudEnv))
+
   return {
     schema_version: QUICKSTART_SCHEMA_VERSION,
     kind: 'elastic-quickstart-runbook',
@@ -36,66 +60,8 @@ export function buildRunbook (cloudEnv: CloudEnv): JsonValue {
       command_help: 'elastic cloud --help --json',
       full_schema: 'elastic cli-schema',
     },
-    steps: [
-      {
-        id: 'auth',
-        title: 'Connect to Elastic Cloud',
-        capability: 'An org API key stored in a named config context; secrets go to the OS keychain, never argv.',
-        ask_user: `Do you already have an Elastic Cloud account and API key? If not, send them to ${cloudEnv.signupUrl} then ${cloudEnv.apiKeysUrl}. When the key form asks for roles, Organization owner is right for their own fresh account; members of a shared org should pick their usual narrower role.`,
-        commands: [
-          `elastic config context add <name> --cloud-url ${cloudEnv.apiUrl} --cloud-api-key <key> --json`,
-          'elastic status --json  # probes the cloud block; 401/403 means a bad key',
-        ],
-        notes: 'If a context with a working cloud api_key already exists, skip this step.',
-      },
-      {
-        id: 'provision',
-        title: 'Create a Vector DB serverless project',
-        capability: 'Creates the project, waits for readiness, and saves endpoints + credentials as a reusable context in one command. Then mint an ES API key and keep it in the context — downstream tooling wants API keys, and the config context (OS keychain-backed) is the canonical place for credentials; reference them by running commands with --use-context, never by copying values around.',
-        commands: [
-          'elastic cloud serverless regions list-regions --json  # pick a region; it is permanent for the project',
-          `elastic cloud serverless projects vector create --name quickstart --region-id <region> --metadata '${JSON.stringify({ tags: METADATA_TAGS_BY_TYPE.vectordb })}' --wait --save-as quickstart --json`,
-          'elastic es security create-api-key --name quickstart-cli --use-context quickstart --json  # then store it in the context: elastic config context edit quickstart --es-api-key <encoded>',
-        ],
-        on_failure: {
-          '403 projects.create_project.forbidden': `The org is not entitled to Vector DB projects yet. Create a Search project optimized for vectors instead: elastic cloud serverless projects search create --name quickstart --region-id <region> --optimized-for vector --metadata '${JSON.stringify({ tags: METADATA_TAGS_BY_TYPE.elasticsearch })}' --wait --save-as quickstart --json`,
-          fallback_console: cloudEnv.createProjectUrl,
-        },
-      },
-      {
-        id: 'verify',
-        title: 'Verify connectivity',
-        capability: 'Per-service probe of Elasticsearch, Kibana, and Cloud; distinguishes auth failures from network errors.',
-        commands: ['elastic status --use-context quickstart --json'],
-        notes: 'Do not index against a cluster that is not answering. A fresh project can take a moment; retry briefly.',
-      },
-      {
-        id: 'value',
-        title: 'Index sample data and prove semantic search',
-        capability: `semantic_text auto-embeds at ingest via the default EIS inference endpoint — no model setup, multilingual. Only the semantic field needs declaring (dynamic mapping covers the rest). On a Vector DB project the vectordb_document index mode is auto-applied; do not hand-tune HNSW or quantization.`,
-        commands: [
-          `elastic es indices create --index ${SAMPLE_INDEX} --mappings '${JSON.stringify(sampleIndexMappings())}' --use-context quickstart --json`,
-          `elastic es helpers bulk-ingest --index ${SAMPLE_INDEX} --data-file <your-docs.ndjson> --use-context quickstart --json`,
-          `elastic es search --index ${SAMPLE_INDEX} --use-context quickstart --json  # pass the query bodies below via stdin or --input-file`,
-        ],
-        query_bodies: {
-          keyword_bm25: bm25QueryBody(DEMO_QUERY, 5),
-          semantic: semanticQueryBody(DEMO_QUERY, 5),
-        },
-        notes: `Show the user both result lists side by side: semantic search matches meaning where keyword search needs the words "${DEMO_QUERY}" to appear. Fields: ${LEXICAL_FIELD} (text) copy_to ${SEMANTIC_FIELD} (semantic_text).`,
-      },
-      {
-        id: 'handoff',
-        title: 'Keep building',
-        capability: 'Two co-equal exits: keep working here with the saved context, or open Kibana (endpoint saved in the context).',
-        commands: [
-          'elastic config context list --json  # contexts and their endpoints, including kibana',
-          `elastic es search --index ${SAMPLE_INDEX} --use-context quickstart --json`,
-        ],
-        notes: 'Next: hybrid retrieval (RRF), ES|QL aggregations, or point the Elastic Bookshop reference app at the project.',
-      },
-    ],
-    reference_app: bookshopAgentGuide(),
+    steps,
+    reference_app: bookshopAgentGuide() as JsonValue,
     links: {
       docs_quickstart: LINKS.docsQuickstart,
       agent_skill: LINKS.agentSkill,
@@ -106,5 +72,10 @@ export function buildRunbook (cloudEnv: CloudEnv): JsonValue {
       reference_app: LINKS.referenceApp,
     },
     cost_awareness: 'Serverless bills by usage. The project is disposable: elastic cloud serverless projects vector delete --id <id> --json (a Search project created via the 403 fallback lives under `projects search` — use `projects search delete`)',
-  } as JsonValue
+  }
+}
+
+/** Builds the runbook object emitted in agent mode from the current flow. */
+export function buildRunbook (cloudEnv: CloudEnv): JsonValue {
+  return translate(buildFlow(), cloudEnv)
 }

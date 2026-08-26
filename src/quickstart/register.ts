@@ -8,8 +8,9 @@
  * Vector DB serverless project with sample data and a proof-of-value query.
  *
  * Two renderers over one flow: interactive (TTY) walks the tree with prompts;
- * agent mode (no TTY, or --json) emits the self-describing runbook once and
- * exits. Only global flags apply — the command itself takes none.
+ * agent mode (no TTY, or --json) translates opted-in `agent` node metadata into
+ * the self-describing runbook once and exits. Only global flags apply — the
+ * command itself takes none.
  */
 
 import { defineCommand } from "../factory.ts";

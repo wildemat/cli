@@ -5,8 +5,9 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildRunbook } from '../../src/quickstart/runbook.ts'
+import { buildRunbook, translate } from '../../src/quickstart/runbook.ts'
 import { CLOUD_ENVS } from '../../src/quickstart/constants.ts'
+import type { FlowNode } from '../../src/quickstart/tree.ts'
 
 interface Step {
   id: string
@@ -14,6 +15,42 @@ interface Step {
   on_failure?: Record<string, string>
   query_bodies?: Record<string, unknown>
 }
+
+describe('translate', () => {
+  it('includes only nodes that declare agent metadata', () => {
+    const nodes: FlowNode[] = [
+      {
+        id: 'auth',
+        kind: 'check',
+        title: 'Auth',
+        run: async () => {},
+        agent: { capability: 'creds', commands: ['elastic status --json'] },
+      },
+      {
+        id: 'context-doc',
+        kind: 'command',
+        title: 'Write context doc',
+        run: async () => {},
+      },
+      {
+        id: 'handoff',
+        kind: 'handoff',
+        title: 'Interactive handoff title',
+        run: async () => {},
+        agent: {
+          title: 'Keep building',
+          capability: 'exits',
+          commands: (env) => [`elastic config context list --json # ${env.name}`],
+        },
+      },
+    ]
+    const runbook = translate(nodes, CLOUD_ENVS.qa) as Record<string, unknown>
+    const steps = runbook.steps as Step[]
+    assert.deepEqual(steps.map((s) => s.id), ['auth', 'handoff'])
+    assert.equal(steps[1]?.commands?.[0], 'elastic config context list --json # qa')
+    assert.equal((steps[1] as { title?: string }).title, 'Keep building')
+  })
+})
 
 describe('buildRunbook', () => {
   const runbook = buildRunbook(CLOUD_ENVS.prod) as Record<string, unknown>

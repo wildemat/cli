@@ -12,27 +12,35 @@
  * printed by the caller.
  */
 
-import { mkdtemp, writeFile, chmod } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { stringify as stringifyYaml } from 'yaml'
-import { LINKS, QUICKSTART_SCHEMA_VERSION, SEMANTIC_FIELD, LEXICAL_FIELD } from '../constants.ts'
-import { projectCommandGroup, type QuickstartState } from '../types.ts'
+import { mkdtemp, writeFile, chmod } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { stringify as stringifyYaml } from "yaml";
+import {
+  LINKS,
+  QUICKSTART_SCHEMA_VERSION,
+  SEMANTIC_FIELD,
+  LEXICAL_FIELD,
+} from "../constants.ts";
+import { projectCommandGroup, type QuickstartState } from "../types.ts";
 
 /** Writes the context doc (dir 0700, file 0600) and returns its path. */
-export async function writeContextDoc (state: QuickstartState): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'elastic-quickstart-'))
-  await chmod(dir, 0o700)
-  const path = join(dir, 'context.md')
-  await writeFile(path, renderContextDoc(state), { encoding: 'utf-8', mode: 0o600 })
-  return path
+export async function writeContextDoc(state: QuickstartState): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "elastic-quickstart-"));
+  await chmod(dir, 0o700);
+  const path = join(dir, "context.md");
+  await writeFile(path, renderContextDoc(state), {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
+  return path;
 }
 
 /** Renders the full document: YAML frontmatter + agent-facing markdown. */
-export function renderContextDoc (state: QuickstartState): string {
+export function renderContextDoc(state: QuickstartState): string {
   const frontmatter = {
     schema_version: QUICKSTART_SCHEMA_VERSION,
-    generated_by: 'elastic quickstart',
+    generated_by: "elastic quickstart",
     context: state.projectContextName ?? null,
     project: {
       type: state.projectType ?? null,
@@ -46,25 +54,30 @@ export function renderContextDoc (state: QuickstartState): string {
     },
     index: state.indexName ?? null,
     docs_indexed: state.docsIndexed ?? null,
-    created: ['serverless project', 'config context', 'sample index'],
-  }
+    created: ["serverless project", "config context", "sample index"],
+  };
 
-  const ctx = state.projectContextName ?? '<context>'
-  const index = state.indexName ?? 'books'
-  const demo = state.demoQuery ?? state.comparison?.query ?? 'a story about a girl growing up'
-  const group = projectCommandGroup(state.projectType ?? 'vectordb')
+  const ctx = state.projectContextName ?? "<context>";
+  const index = state.indexName ?? "books";
+  const demo =
+    state.demoQuery ??
+    state.comparison?.query ??
+    "a story about a girl growing up";
+  const group = projectCommandGroup(state.projectType ?? "vectordb");
 
   const body = `# Elastic quickstart — handoff context
 
-The user just completed \`elastic quickstart\`. A serverless ${state.projectType === 'elasticsearch' ? 'Search (vector-optimized)' : 'Vector DB'} project
+The user just completed \`elastic quickstart\`. A serverless ${state.projectType === "elasticsearch" ? "Search (vector-optimized)" : "Vector DB"} project
 is running with sample data indexed. Continue building their search application from here.
 
 ## What exists now
 
-- **Project**: ${state.projectName ?? ''} (\`${state.projectId ?? ''}\`, region \`${state.regionId ?? ''}\`)
-- **Config context**: \`${ctx}\` — holds the project endpoints and ${state.esApiKeyMinted === true
-    ? 'an Elasticsearch API key'
-    : 'its credentials'},
+- **Project**: ${state.projectName ?? ""} (\`${state.projectId ?? ""}\`, region \`${state.regionId ?? ""}\`)
+- **Config context**: \`${ctx}\` — holds the project endpoints and ${
+    state.esApiKeyMinted === true
+      ? "an Elasticsearch API key"
+      : "its credentials"
+  },
   stored in the OS keychain and resolved by the \`elastic\` CLI. Run any command with
   \`elastic --use-context ${ctx} …\`; never copy the credentials out of the config.
 - **Sample index**: \`${index}\` — books with \`${LEXICAL_FIELD}\` (text) copied into \`${SEMANTIC_FIELD}\`
@@ -98,13 +111,15 @@ Hybrid search combines semantic and keyword matching — see ${LINKS.docsQuickst
 
 ## Suggested next steps
 
-1. Try hybrid retrieval (RRF over the two queries above).
-2. Aggregate with ES|QL (e.g. books per decade) — not covered here on purpose.
-3. Point a real application at the project: the CLI context already authenticates every
+1. Install the elasticsearch agent skills: \`npx skills add elastic/agent-skills\` and
+  continue with the elasticsearch-onboarding skill.
+2. Try hybrid retrieval (RRF over the two queries above).
+3. Aggregate with ES|QL (e.g. books per decade) — not covered here on purpose.
+4. Point a real application at the project: the CLI context already authenticates every
    \`elastic\` command. For an app's own configuration, mint that app a dedicated key
    (\`elastic es security create-api-key --name <app> --use-context ${ctx}\`) rather than
    reusing or extracting this context's key.
-4. Run the Elastic Bookshop reference app against this project: ${LINKS.referenceApp}
+5. Run the Elastic Bookshop reference app against this project: ${LINKS.referenceApp}
    (its .env wants \`ELASTICSEARCH_URL\`, \`ELASTIC_API_KEY\`, optional \`KIBANA_URL\`).
 
 ## Links
@@ -120,9 +135,9 @@ Hybrid search combines semantic and keyword matching — see ${LINKS.docsQuickst
 
 Serverless projects bill by usage (ingest, retention, search power). This is a trial project and
 disposable: delete it with
-\`elastic cloud serverless projects ${group} delete --id ${state.projectId ?? '<id>'} --use-context ${state.cloudContextName ?? '<cloud-context>'}\`
+\`elastic cloud serverless projects ${group} delete --id ${state.projectId ?? "<id>"} --use-context ${state.cloudContextName ?? "<cloud-context>"}\`
 or from the Cloud console. Billing dimensions: ${LINKS.billing}
-`
+`;
 
-  return `---\n${stringifyYaml(frontmatter).trimEnd()}\n---\n\n${body}`
+  return `---\n${stringifyYaml(frontmatter).trimEnd()}\n---\n\n${body}`;
 }

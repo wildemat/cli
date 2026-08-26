@@ -37,14 +37,23 @@ describe('sample dataset', () => {
         `"${doc.title}" contains the demo query verbatim`,
       )
     }
-    // But BM25 must have keyword bait ("story"/"growing"/"girl" in unrelated books)…
-    assert.ok(docs.some((d) => `${d.title} ${d.description}`.toLowerCase().includes('story')))
-    assert.ok(docs.some((d) => d.description.toLowerCase().includes('growing')))
+    // Headline decoy packs story/girl/growing into one blurb so BM25 ranks it
+    // first every time; other decoys carry subsets of the bait.
+    const labGirl = docs.find((d) => d.title === 'Lab Girl')
+    assert.ok(labGirl != null)
+    assert.match(labGirl.description.toLowerCase(), /\bstory\b/)
+    assert.match(labGirl.description.toLowerCase(), /\bgirl\b/)
+    assert.match(labGirl.description.toLowerCase(), /\bgrowing\b/)
     assert.ok(docs.some((d) => d.title.toLowerCase().includes('girl')))
-    // …and the semantic side has real coming-of-age material.
-    assert.ok(docs.some((d) => d.description.toLowerCase().includes('coming of age') ||
-      d.description.toLowerCase().includes('comes of age') ||
-      d.description.toLowerCase().includes('childhood')))
+    // Coming-of-age targets must not leak the same bait words into BM25.
+    const semanticTargets = docs.filter((d) =>
+      /coming of age|comes of age|childhood|girlhood|womanhood|adulthood/.test(d.description.toLowerCase()),
+    )
+    assert.ok(semanticTargets.length >= 5)
+    for (const doc of semanticTargets) {
+      assert.ok(!/\bgirl\b/.test(doc.description.toLowerCase()), `semantic target "${doc.title}" still contains "girl"`)
+      assert.ok(!doc.description.toLowerCase().includes('growing'), `semantic target "${doc.title}" still contains "growing"`)
+    }
   })
 
   it('serializes to one JSON object per NDJSON line', async () => {

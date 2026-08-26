@@ -9,9 +9,10 @@
  * Interactive mode requires BOTH stdin and stderr to be TTYs: stdin is the
  * binding constraint (the prompt library needs raw mode to read keys), and
  * stderr governs whether prompt UI can be drawn at all. `--json` forces agent
- * mode even at a TTY. Deliberately no agent-specific env sniffing: agents
- * invoking the CLI through a shell have no TTY on fd 0/2, so TTY detection
- * alone is correct and portable.
+ * mode even at a TTY.
+ *
+ * Coding agents often allocate a PTY (so TTY detection alone is not enough).
+ * Agents must pass `--json` explicitly — that is the published contract.
  */
 
 export type QuickstartMode = 'interactive' | 'agent'

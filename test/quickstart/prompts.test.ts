@@ -7,6 +7,7 @@ import { describe, it, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   createPrompter,
+  pauseAfterStep,
   PromptCancelled,
   _testSetClack,
 } from '../../src/quickstart/prompts.ts'
@@ -58,10 +59,13 @@ function fakeClack (script: { select?: unknown[], confirm?: unknown[], password?
 describe('quickstart prompter', () => {
   afterEach(() => { _testSetClack(undefined) })
 
+  /** Production pause would stall the suite; tests opt out. */
+  const prompt = (): ReturnType<typeof createPrompter> => createPrompter({ stepPauseMs: 0 })
+
   it('returns scripted values and draws on stderr', async () => {
     const { impl, calls } = fakeClack({ select: ['a'], confirm: [true], password: ['key'], text: ['./dir'] })
     _testSetClack(impl)
-    const p = createPrompter()
+    const p = prompt()
     assert.equal(await p.select('q', [{ value: 'a', label: 'A' }]), 'a')
     assert.equal(await p.confirm('sure?'), true)
     assert.equal(await p.password('paste'), 'key')
@@ -75,7 +79,7 @@ describe('quickstart prompter', () => {
   it('text tolerates a missing initial value and an empty submission', async () => {
     const { impl, calls } = fakeClack({ text: [undefined] })
     _testSetClack(impl)
-    const p = createPrompter()
+    const p = prompt()
     assert.equal(await p.text('where?'), '')
     assert.equal('initialValue' in (calls[0]!.args[0] as object), false)
   })
@@ -83,14 +87,14 @@ describe('quickstart prompter', () => {
   it('throws PromptCancelled on Ctrl-C', async () => {
     const { impl } = fakeClack({ select: [CANCEL] })
     _testSetClack(impl)
-    const p = createPrompter()
+    const p = prompt()
     await assert.rejects(p.select('q', []), PromptCancelled)
   })
 
   it('never arms a timeout — prompts wait indefinitely for a human', async () => {
     const { impl, calls } = fakeClack({ select: ['a'], confirm: [true] })
     _testSetClack(impl)
-    const p = createPrompter()
+    const p = prompt()
     await p.select('first', [])
     await p.confirm('second')
     for (const call of calls.filter((c) => c.fn === 'select' || c.fn === 'confirm')) {
@@ -101,7 +105,7 @@ describe('quickstart prompter', () => {
   it('maps spinner events', async () => {
     const { impl, calls } = fakeClack({})
     _testSetClack(impl)
-    const p = createPrompter()
+    const p = prompt()
     const s = p.spinner('working')
     s.message('phase')
     s.stop('done')
@@ -113,8 +117,34 @@ describe('quickstart prompter', () => {
   it('forwards intro/outro/note/log lines', async () => {
     const { impl, calls } = fakeClack({})
     _testSetClack(impl)
-    const p = createPrompter()
+    const p = prompt()
     p.intro('t'); p.outro('o'); p.note('n', 'title'); p.info('i'); p.success('s'); p.warn('w')
     assert.deepEqual(calls.map((c) => c.fn), ['intro', 'outro', 'note', 'log.info', 'log.success', 'log.warn'])
+  })
+
+  it('pauseAfterStep(0) is a no-op; printed steps pause, inputs do not', async () => {
+    const { impl } = fakeClack({ select: ['a'] })
+    _testSetClack(impl)
+
+    const tNoop = Date.now()
+    pauseAfterStep(0)
+    assert.ok(Date.now() - tNoop < 50)
+
+    const p = createPrompter({ stepPauseMs: 40 })
+    const tInfo = Date.now()
+    p.info('digest me')
+    assert.ok(Date.now() - tInfo >= 30, 'printed steps should pause')
+
+    const tSelect = Date.now()
+    await p.select('pick', [{ value: 'a', label: 'A' }])
+    assert.ok(Date.now() - tSelect < 30, 'inputs should not add a digest pause')
+
+    const spin = p.spinner('work')
+    const tMsg = Date.now()
+    spin.message('tick')
+    assert.ok(Date.now() - tMsg < 30, 'spinner updates should not pause')
+    const tStop = Date.now()
+    spin.stop('done')
+    assert.ok(Date.now() - tStop >= 30, 'spinner stop should pause')
   })
 })

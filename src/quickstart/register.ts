@@ -8,9 +8,9 @@
  * Vector DB serverless project with sample data and a proof-of-value query.
  *
  * Two renderers over one flow: interactive (TTY) walks the tree with prompts;
- * agent mode (no TTY, or --json) translates opted-in `agent` node metadata into
- * the self-describing runbook once and exits. Only global flags apply — the
- * command itself takes none.
+ * agent mode (`--json`, or no TTY) translates opted-in `agent` node metadata
+ * into the self-describing runbook once and exits. Agents with a PTY must
+ * pass `--json` — bare `elastic quickstart` is for humans at a real terminal.
  */
 
 import { defineCommand } from "../factory.ts";
@@ -137,7 +137,8 @@ export function registerQuickstartCommand(): OpaqueCommandHandle {
   return defineCommand({
     name: "quickstart",
     description:
-      "Create a Vector DB serverless project, index sample data, and see semantic search work — then keep building with your agent or Kibana",
+      "Interactively create a Vector DB project and explore search features.\n\n\
+      Agents: run `elastic quickstart --json` and follow the runbook (do not run interactively).",
     handler: quickstartHandler,
     formatOutput: (result) => {
       const obj = result as Record<string, JsonValue>;

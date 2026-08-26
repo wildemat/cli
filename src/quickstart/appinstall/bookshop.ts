@@ -98,14 +98,14 @@ async function installBookshop (payload: AppInstallPayload, deps: QuickstartDeps
 
   if (whichBin('docker', { env: deps.env }) == null) {
     prompter.info('Docker was not found on PATH — start the app yourself once it is installed:')
-    prompter.note(runInstructions(dir, payload), 'Run the Bookshop app (new shell)')
+    prompter.note(runInstructions(dir), 'Run the Bookshop app (new shell)')
     return { dir, detail: 'installed' }
   }
   if (!(await prompter.confirm('Start the app now with Docker?', true))) {
-    prompter.note(runInstructions(dir, payload), 'Run the Bookshop app (new shell)')
+    prompter.note(runInstructions(dir), 'Run the Bookshop app (new shell)')
     return { dir, detail: 'installed' }
   }
-  return await runAppViaDocker(dir, payload, deps)
+  return await runAppViaDocker(dir, deps)
 }
 
 /**
@@ -113,12 +113,12 @@ async function installBookshop (payload: AppInstallPayload, deps: QuickstartDeps
  * Any failure prints the failed command plus the process tail and breaks out
  * to the manual run instructions — never a hard stop.
  */
-async function runAppViaDocker (dir: string, payload: AppInstallPayload, deps: QuickstartDeps): Promise<AppInstallOutcome> {
+async function runAppViaDocker (dir: string, deps: QuickstartDeps): Promise<AppInstallOutcome> {
   const { prompter } = deps
 
   const up = await runDockerStep(dir, ['compose', 'up', '--build', '--detach'], prompter,
     'Building and starting the app (first build can take several minutes)…')
-  if (!up.ok) return dockerStepFailed(dir, payload, prompter, 'docker compose up --build --detach', up.output)
+  if (!up.ok) return dockerStepFailed(dir, prompter, 'docker compose up --build --detach', up.output)
   prompter.success('App containers are up (backend :8001, frontend :3000).')
   await deps.sleep(STEP_PAUSE_MS)
 
@@ -129,37 +129,35 @@ async function runAppViaDocker (dir: string, payload: AppInstallPayload, deps: Q
   if (existsSync(join(dir, 'evaluation'))) {
     const cp = await runDockerStep(dir, ['compose', 'cp', 'evaluation', 'backend:/app/evaluation'],
       prompter, 'Preparing the bookshop CLI inside the container…')
-    if (!cp.ok) return dockerStepFailed(dir, payload, prompter, 'docker compose cp evaluation backend:/app/evaluation', cp.output)
+    if (!cp.ok) return dockerStepFailed(dir, prompter, 'docker compose cp evaluation backend:/app/evaluation', cp.output)
   }
 
   const setup = await runDockerStep(dir, ['compose', 'exec', 'backend', './bookshop', 'setup', '--profile', PROFILE],
     prompter, `Loading the demo catalogue (setup --profile ${PROFILE})…`)
-  if (!setup.ok) return dockerStepFailed(dir, payload, prompter, `docker compose exec backend ./bookshop setup --profile ${PROFILE}`, setup.output)
+  if (!setup.ok) return dockerStepFailed(dir, prompter, `docker compose exec backend ./bookshop setup --profile ${PROFILE}`, setup.output)
   prompter.success('Demo catalogue loaded into your project (the app\'s own bookshop-* indices).')
   await deps.sleep(STEP_PAUSE_MS)
 
-  const query = payload.demoQuery ?? DEMO_QUERY
   // Bare `./bookshop search` defaults to --strategy all, which runs every
   // demo strategy including `reranked` (text_similarity_reranker). That second
   // inference pass routinely 429s on EIS during the first-run demo; hybrid is
   // the profile default and enough to prove the app talks to the project.
   const search = await runDockerStep(
     dir,
-    ['compose', 'exec', 'backend', './bookshop', 'search', '--strategy', 'hybrid', query],
+    ['compose', 'exec', 'backend', './bookshop', 'search', '--strategy', 'hybrid', DEMO_QUERY],
     prompter,
-    `Searching: "${query}"…`,
+    `Searching: "${DEMO_QUERY}"…`,
   )
   if (!search.ok) {
     return dockerStepFailed(
       dir,
-      payload,
       prompter,
-      `docker compose exec backend ./bookshop search --strategy hybrid ${shq(query)}`,
+      `docker compose exec backend ./bookshop search --strategy hybrid ${shq(DEMO_QUERY)}`,
       search.output,
     )
   }
   if (search.output.trim() !== '') {
-    prompter.note(tailLines(search.output, 15), `./bookshop search --strategy hybrid ${shq(query)}`)
+    prompter.note(tailLines(search.output, 15), `./bookshop search --strategy hybrid ${shq(DEMO_QUERY)}`)
   }
 
   deps.openBrowser(FRONTEND_URL)
@@ -170,7 +168,6 @@ async function runAppViaDocker (dir: string, payload: AppInstallPayload, deps: Q
 
 function dockerStepFailed (
   dir: string,
-  payload: AppInstallPayload,
   prompter: Prompter,
   command: string,
   output: string,
@@ -178,7 +175,7 @@ function dockerStepFailed (
   const excerpt = tailLines(output, 6)
   if (excerpt !== '') prompter.info(excerpt)
   prompter.warn(`That step failed: ${command} (run in ${dir})`)
-  prompter.note(runInstructions(dir, payload), 'Continue the setup yourself (new shell)')
+  prompter.note(runInstructions(dir), 'Continue the setup yourself (new shell)')
   return { dir, detail: 'installed (docker step failed)' }
 }
 
@@ -337,8 +334,8 @@ function shq (s: string): string {
 }
 
 /** Copy-paste commands for a fresh shell; the installer never runs these. */
-export function runInstructions (dir: string, payload: AppInstallPayload): string {
-  const query = payload.demoQuery ?? DEMO_QUERY
+export function runInstructions (dir: string): string {
+  const query = DEMO_QUERY
   return [
     `cd ${shq(dir)}`,
     'docker compose up --build --detach   # backend :8001, frontend :3000',

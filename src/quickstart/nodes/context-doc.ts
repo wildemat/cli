@@ -70,6 +70,10 @@ export function renderContextDoc(state: QuickstartState): string {
 The user just completed \`elastic quickstart\`. A serverless ${state.projectType === "elasticsearch" ? "Search (vector-optimized)" : "Vector DB"} project
 is running with sample data indexed. Continue building their search application from here.
 
+First check for the elastic agent skills. If not present, prompt the user to approve
+it's installation via \`npx skills add elastic/agent-skills\`. Then invoke \`/elasticsearch-onboarding\`
+skill with the context provided in this document.
+
 ## What exists now
 
 - **Project**: ${state.projectName ?? ""} (\`${state.projectId ?? ""}\`, region \`${state.regionId ?? ""}\`)
@@ -111,15 +115,13 @@ Hybrid search combines semantic and keyword matching — see ${LINKS.docsQuickst
 
 ## Suggested next steps
 
-1. Install the elasticsearch agent skills: \`npx skills add elastic/agent-skills\` and
-  continue with the elasticsearch-onboarding skill.
-2. Try hybrid retrieval (RRF over the two queries above).
-3. Aggregate with ES|QL (e.g. books per decade) — not covered here on purpose.
-4. Point a real application at the project: the CLI context already authenticates every
+1. Try hybrid retrieval (RRF over the two queries above).
+2. Aggregate with ES|QL (e.g. books per decade) — not covered here on purpose.
+3. Point a real application at the project: the CLI context already authenticates every
    \`elastic\` command. For an app's own configuration, mint that app a dedicated key
    (\`elastic es security create-api-key --name <app> --use-context ${ctx}\`) rather than
    reusing or extracting this context's key.
-5. Run the Elastic Bookshop reference app against this project: ${LINKS.referenceApp}
+4. Run the Elastic Bookshop reference app against this project: ${LINKS.referenceApp}
    (its .env wants \`ELASTICSEARCH_URL\`, \`ELASTIC_API_KEY\`, optional \`KIBANA_URL\`).
 
 ## Links

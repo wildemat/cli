@@ -26,8 +26,6 @@ function payload (overrides: Partial<AppInstallPayload> = {}): AppInstallPayload
   return {
     contextName: 'quickstart',
     endpoints: { elasticsearch: 'https://es.example', kibana: 'https://kb.example' },
-    indexName: 'books',
-    demoQuery: 'a story about a girl growing up',
     projectType: 'vectordb',
     dedicatedApiKey: 'encoded-key',
     ...overrides,
@@ -318,22 +316,19 @@ describe('envFileContent / runInstructions', () => {
     assert.doesNotMatch(env, /KIBANA_URL/)
   })
 
-  it('falls back to defaults when the value node never ran', () => {
-    const p = payload()
-    delete (p as Partial<AppInstallPayload>).indexName
-    delete (p as Partial<AppInstallPayload>).demoQuery
-    const text = runInstructions('/x', p)
+  it('prints the app\'s own search, not the CLI value-step index or query', () => {
+    const text = runInstructions('/x')
     assert.match(text, /a story about a girl growing up/)
     assert.match(text, /compose cp evaluation backend:\/app\/evaluation/)
     assert.doesNotMatch(text, /"books" index/)
   })
 
   it('shell-quotes paths and queries so the printed commands survive a paste', () => {
-    const text = runInstructions('/Users/me/My Projects/bookshop', payload({ demoQuery: 'a "coming of age" story' }))
+    const text = runInstructions('/Users/me/My Projects/bookshop')
     assert.match(text, /^cd '\/Users\/me\/My Projects\/bookshop'$/m)
-    assert.match(text, /search --strategy hybrid 'a "coming of age" story'$/m)
+    assert.match(text, /search --strategy hybrid 'a story about a girl growing up'$/m)
     // A plain path stays unquoted for readability.
-    assert.match(runInstructions('/x/bookshop', payload()), /^cd \/x\/bookshop$/m)
+    assert.match(runInstructions('/x/bookshop'), /^cd \/x\/bookshop$/m)
   })
 })
 

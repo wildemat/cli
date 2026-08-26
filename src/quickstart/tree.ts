@@ -23,12 +23,17 @@
  * defaults — nothing to configure on cloud).
  */
 
-import { runAuthNode } from './nodes/auth.ts'
-import { runProvisionNode } from './nodes/provision.ts'
-import { runVerifyNode } from './nodes/verify.ts'
-import { runValueNode, sampleIndexMappings, bm25QueryBody, semanticQueryBody } from './nodes/value.ts'
-import { writeContextDoc } from './nodes/context-doc.ts'
-import { runHandoffNode } from './nodes/handoff.ts'
+import { runAuthNode } from "./nodes/auth.ts";
+import { runProvisionNode } from "./nodes/provision.ts";
+import { runVerifyNode } from "./nodes/verify.ts";
+import {
+  runValueNode,
+  sampleIndexMappings,
+  bm25QueryBody,
+  semanticQueryBody,
+} from "./nodes/value.ts";
+import { writeContextDoc } from "./nodes/context-doc.ts";
+import { runHandoffNode } from "./nodes/handoff.ts";
 import {
   DEMO_QUERY,
   LEXICAL_FIELD,
@@ -36,14 +41,19 @@ import {
   SAMPLE_INDEX,
   SEMANTIC_FIELD,
   type CloudEnv,
-} from './constants.ts'
-import type { JsonValue } from '../factory.ts'
-import type { QuickstartDeps, QuickstartState } from './types.ts'
+} from "./constants.ts";
+import type { JsonValue } from "../factory.ts";
+import type { QuickstartDeps, QuickstartState } from "./types.ts";
 
-export type NodeKind = 'check' | 'command' | 'question' | 'handoff' | 'terminal'
+export type NodeKind =
+  | "check"
+  | "command"
+  | "question"
+  | "handoff"
+  | "terminal";
 
 /** Static value or CloudEnv-resolved value for agent-facing fields. */
-export type AgentField<T> = T | ((env: CloudEnv) => T)
+export type AgentField<T> = T | ((env: CloudEnv) => T);
 
 /**
  * Agent-mode metadata for a flow node. Presence of this object opts the node
@@ -51,111 +61,135 @@ export type AgentField<T> = T | ((env: CloudEnv) => T)
  */
 export interface FlowNodeAgent {
   /** Override the interactive title when agent wording should differ. */
-  title?: string
-  capability: AgentField<string>
-  ask_user?: AgentField<string>
-  commands?: AgentField<string[]>
-  on_failure?: AgentField<Record<string, string>>
-  notes?: AgentField<string>
+  title?: string;
+  capability: AgentField<string>;
+  ask_user?: AgentField<string>;
+  commands?: AgentField<string[]>;
+  on_failure?: AgentField<Record<string, string>>;
+  notes?: AgentField<string>;
   /** Merged into the emitted step (e.g. `query_bodies`). */
-  extras?: AgentField<Record<string, JsonValue>>
+  extras?: AgentField<Record<string, JsonValue>>;
 }
 
-/** A step in the flow; `run` advances the shared state. */
+/** A step in the flow; `run` advances the tree. */
 export interface FlowNode {
-  id: string
-  kind: NodeKind
-  title: string
-  run: (state: QuickstartState, deps: QuickstartDeps) => Promise<void>
-  agent?: FlowNodeAgent
+  id: string;
+  kind: NodeKind;
+  title: string;
+  run: (state: QuickstartState, deps: QuickstartDeps) => Promise<void>;
+  agent?: FlowNodeAgent;
 }
 
 /** The v1 flow, in execution order. */
-export function buildFlow (): FlowNode[] {
+export function buildFlow(): FlowNode[] {
   return [
     {
-      id: 'auth',
-      kind: 'check',
-      title: 'Connect to Elastic Cloud',
+      id: "auth",
+      kind: "check",
+      title: "Connect to Elastic Cloud",
       run: async (state, deps) => {
-        const auth = await runAuthNode(deps)
-        state.cloudContextName = auth.cloudContextName
+        const auth = await runAuthNode(deps);
+        state.cloudContextName = auth.cloudContextName;
       },
       agent: {
-        capability: 'An org API key stored in a named config context; secrets go to the OS keychain, never argv.',
+        capability:
+          "An org API key stored in a named config context. Prefer OS keychain; use --inline-secrets + $(env:…) when the agent cannot write the keychain. Never put the raw key in chat logs or shell history if you can avoid it.",
         ask_user: (env) =>
-          `Do you already have an Elastic Cloud account and API key? If not, send them to ${env.signupUrl} then ${env.apiKeysUrl}. When the key form asks for roles, Organization owner is right for their own fresh account; members of a shared org should pick their usual narrower role.`,
+          [
+            `Do you already have an Elastic Cloud account and organization API key? If not: ${env.signupUrl} then create a key at ${env.apiKeysUrl}.`,
+            "Role: Organization owner is right for a fresh account you own; otherwise ask your org admin for a key that can create serverless projects.",
+            "Pick ONE way to store the key (ask which they prefer):",
+            'A) Separate terminal (preferred) — you give them the "raw key" command below; they paste the real key locally. You never see the secret.',
+            'B) Paste in chat — you set ELASTIC_CLOUD_API_KEY in this shell (keep it exported for the rest of the runbook; do not unset), then run the "env ref" command below. That command MUST include --inline-secrets or the env expression is wrongly stuffed into the keychain.',
+          ].join(" "),
         commands: (env) => [
-          `elastic config context add <name> --cloud-url ${env.apiUrl} --cloud-api-key <key> --json`,
-          'elastic status --json  # probes the cloud block; 401/403 means a bad key',
+          `elastic config context add <name> --cloud-url ${env.apiUrl} --cloud-api-key <key> --json  # A) separate terminal: user pastes the real key; keychain when available`,
+          `elastic config context add <name> --cloud-url ${env.apiUrl} --cloud-api-key <key> --inline-secrets --json  # A') keychain unavailable`,
+          `elastic config context add <name> --cloud-url ${env.apiUrl} --cloud-api-key '$(env:ELASTIC_CLOUD_API_KEY)' --inline-secrets --json  # B) chat paste: export ELASTIC_CLOUD_API_KEY first; keep it set; --inline-secrets REQUIRED with $(env:…)`,
+          "elastic status --json  # probes the cloud block; 401/403 means a bad key",
         ],
-        notes: 'If a context with a working cloud api_key already exists, skip this step.',
+        notes:
+          "If a context with a working cloud api_key already exists, skip this step. Never pass $(env:ELASTIC_CLOUD_API_KEY) without --inline-secrets. Never unset ELASTIC_CLOUD_API_KEY until the whole runbook finishes if you used path B.",
       },
     },
     {
-      id: 'provision',
-      kind: 'command',
-      title: 'Create a Vector DB serverless project',
+      id: "provision",
+      kind: "command",
+      title: "Create a Vector DB serverless project",
       run: async (state, deps) => {
-        const result = await runProvisionNode(deps, state.cloudContextName!)
-        state.projectType = result.projectType
-        state.projectId = result.projectId
-        state.projectName = result.projectName
-        state.regionId = result.regionId
-        state.projectContextName = result.projectContextName
-        state.endpoints = result.endpoints
-        state.esApiKeyMinted = result.esApiKeyMinted
+        const result = await runProvisionNode(deps, state.cloudContextName!);
+        state.projectType = result.projectType;
+        state.projectId = result.projectId;
+        state.projectName = result.projectName;
+        state.regionId = result.regionId;
+        state.projectContextName = result.projectContextName;
+        state.endpoints = result.endpoints;
+        state.esApiKeyMinted = result.esApiKeyMinted;
       },
       agent: {
-        capability: 'Creates the project, waits for readiness, and saves endpoints + credentials as a reusable context in one command. Then mint an ES API key and keep it in the context — downstream tooling wants API keys, and the config context (OS keychain-backed) is the canonical place for credentials; reference them by running commands with --use-context, never by copying values around.',
+        capability:
+          "Creates the project, waits for readiness, and saves endpoints + credentials as a reusable context in one command. Then mint an ES API key and keep it in the context — downstream tooling wants API keys, and the config context (OS keychain-backed) is the canonical place for credentials; reference them by running commands with --use-context, never by copying values around.",
         commands: [
-          'elastic cloud serverless regions list-regions --json  # pick a region; it is permanent for the project',
+          "elastic cloud serverless regions list-regions --json  # pick a region; it is permanent for the project",
           `elastic cloud serverless projects vector create --name quickstart --region-id <region> --metadata '${JSON.stringify({ tags: METADATA_TAGS_BY_TYPE.vectordb })}' --wait --save-as quickstart --json`,
-          'elastic es security create-api-key --name quickstart-cli --use-context quickstart --json  # then store it in the context: elastic config context edit quickstart --es-api-key <encoded>',
+          "elastic es security create-api-key --name quickstart-cli --use-context quickstart --json  # then store it in the context: elastic config context edit quickstart --es-api-key <encoded>",
         ],
         on_failure: (env) => ({
-          '403 projects.create_project.forbidden': `The org is not entitled to Vector DB projects yet. Create a Search project optimized for vectors instead: elastic cloud serverless projects search create --name quickstart --region-id <region> --optimized-for vector --metadata '${JSON.stringify({ tags: METADATA_TAGS_BY_TYPE.elasticsearch })}' --wait --save-as quickstart --json`,
+          "403 projects.create_project.forbidden": `Often a wrong or under-privileged org API key — ask the user for a different key (Organization owner on a fresh account), save it with elastic config context edit <cloud-context> --cloud-api-key <key>, then retry the vector create. If the org is not entitled to Vector DB, create a Search project optimized for vectors instead: elastic cloud serverless projects search create --name quickstart --region-id <region> --optimized-for vector --metadata '${JSON.stringify({ tags: METADATA_TAGS_BY_TYPE.elasticsearch })}' --wait --save-as quickstart --json`,
           fallback_console: env.createProjectUrl,
         }),
       },
     },
     {
-      id: 'verify',
-      kind: 'check',
-      title: 'Verify connectivity',
+      id: "verify",
+      kind: "check",
+      title: "Verify connectivity",
       run: async (state, deps) => {
         await runVerifyNode(deps, state.projectContextName!, {
           projectType: state.projectType,
           projectId: state.projectId,
           cloudContextName: state.cloudContextName,
-        })
+        });
       },
       agent: {
-        capability: 'Per-service probe of Elasticsearch, Kibana, and Cloud; distinguishes auth failures from network errors.',
-        commands: ['elastic status --use-context quickstart --json'],
-        notes: 'Do not index against a cluster that is not answering. A fresh project can take a moment; retry briefly.',
+        capability:
+          "Per-service probe of Elasticsearch, Kibana, and Cloud; distinguishes auth failures from network errors.",
+        commands: ["elastic status --use-context quickstart --json"],
+        notes:
+          "Do not index against a cluster that is not answering. A fresh project can take a moment; retry briefly.",
       },
     },
     {
-      id: 'value',
-      kind: 'command',
-      title: 'Index sample data and compare keyword vs semantic search',
+      id: "value",
+      kind: "command",
+      title: "Index sample data and compare keyword vs semantic search",
       run: async (state, deps) => {
-        const result = await runValueNode(deps, state.projectContextName!)
-        state.indexName = result.indexName
-        state.docsIndexed = result.docsIndexed
-        state.comparison = result.comparison
-        state.demoQuery = DEMO_QUERY
+        const result = await runValueNode(deps, state.projectContextName!);
+        state.indexName = result.indexName;
+        state.docsIndexed = result.docsIndexed;
+        state.comparison = result.comparison;
+        state.demoQuery = DEMO_QUERY;
       },
       agent: {
-        title: 'Index sample data and prove semantic search',
-        capability: 'semantic_text auto-embeds at ingest via the default EIS inference endpoint — no model setup, multilingual. Only the semantic field needs declaring (dynamic mapping covers the rest). On a Vector DB project the vectordb_document index mode is auto-applied; do not hand-tune HNSW or quantization.',
+        title: "Index sample data and prove semantic search",
+        capability:
+          "semantic_text auto-embeds at ingest via the default EIS inference endpoint — no model setup, multilingual. Only the semantic field needs declaring (dynamic mapping covers the rest). On a Vector DB project the vectordb_document index mode is auto-applied; do not hand-tune HNSW or quantization. The payoff is the side-by-side search comparison — that moment is the product demo.",
+        ask_user: [
+          `Pace this like the interactive tour (do not race to handoff).`,
+          `1) After create+ingest, tell the user you will run the same query two ways: "${DEMO_QUERY}".`,
+          `2) Run keyword (BM25) search, then semantic search (query_bodies below).`,
+          `3) REQUIRED teaching beat — show them the results before anything else: print a two-column comparison of the top titles (and scores if present) for keyword vs semantic. Do not only paraphrase; list the hits.`,
+          `4) Explain in one or two sentences: semantic matched meaning (coming-of-age books without needing those exact words); keyword latched onto words like "story"/"girl"/"growing".`,
+          `5) Ask them to confirm they saw the difference before you continue to handoff. Do not invalidate keys, install apps, or "clean up" until they acknowledge.`,
+        ].join(" "),
         commands: [
           `elastic es indices create --index ${SAMPLE_INDEX} --mappings '${JSON.stringify(sampleIndexMappings())}' --use-context quickstart --json`,
           `elastic es helpers bulk-ingest --index ${SAMPLE_INDEX} --data-file <your-docs.ndjson> --use-context quickstart --json`,
-          `elastic es search --index ${SAMPLE_INDEX} --use-context quickstart --json  # pass the query bodies below via stdin or --input-file`,
+          `elastic es indices refresh --index ${SAMPLE_INDEX} --use-context quickstart --json`,
+          `elastic es search --index ${SAMPLE_INDEX} --use-context quickstart --json  # keyword_bm25 body via stdin or --input-file — then SHOW hits to the user`,
+          `elastic es search --index ${SAMPLE_INDEX} --use-context quickstart --json  # semantic body via stdin or --input-file — then SHOW hits side-by-side with keyword`,
         ],
-        notes: `Show the user both result lists side by side: semantic search matches meaning where keyword search needs the words "${DEMO_QUERY}" to appear. Fields: ${LEXICAL_FIELD} (text) copy_to ${SEMANTIC_FIELD} (semantic_text).`,
+        notes: `Fields: ${LEXICAL_FIELD} (text) copy_to ${SEMANTIC_FIELD} (semantic_text). Demo query: "${DEMO_QUERY}". Skipping or summarizing the comparison without listing titles fails this step.`,
         extras: {
           query_bodies: {
             keyword_bm25: bm25QueryBody(DEMO_QUERY, 5) as JsonValue,
@@ -165,39 +199,46 @@ export function buildFlow (): FlowNode[] {
       },
     },
     {
-      id: 'context-doc',
-      kind: 'command',
-      title: 'Write the handoff context doc',
+      id: "context-doc",
+      kind: "command",
+      title: "Write the handoff context doc",
       run: async (state) => {
-        state.contextDocPath = await writeContextDoc(state)
+        state.contextDocPath = await writeContextDoc(state);
       },
       // No `agent` — interactive-only. Agents already hold conversation context.
     },
     {
-      id: 'handoff',
-      kind: 'handoff',
-      title: 'Continue with an agent or Kibana',
+      id: "handoff",
+      kind: "handoff",
+      title: "Continue with an agent or Kibana",
       run: async (state, deps) => {
-        state.handoff = await runHandoffNode(deps, state)
+        state.handoff = await runHandoffNode(deps, state);
       },
       agent: {
-        title: 'Keep building',
-        capability: 'Two co-equal exits: keep working here with the saved context, or open Kibana (endpoint saved in the context).',
+        title: "Keep building",
+        capability:
+          "Two co-equal exits: keep working here with the saved context, or open Kibana (endpoint saved in the context).",
+        ask_user:
+          "Only after the value-step comparison was shown and the user acknowledged it: ask whether they want to keep querying here, open Kibana, or try the Bookshop reference app. Do not start unrelated cleanup (e.g. invalidating API keys) unless they ask.",
         commands: [
-          'elastic config context list --json  # contexts and their endpoints, including kibana',
+          "elastic config context list --json  # contexts and their endpoints, including kibana",
           `elastic es search --index ${SAMPLE_INDEX} --use-context quickstart --json`,
         ],
-        notes: 'Next: hybrid retrieval (RRF), ES|QL aggregations, or point the Elastic Bookshop reference app at the project.',
+        notes:
+          "Next: hybrid retrieval (RRF), ES|QL aggregations, or point the Elastic Bookshop reference app at the project.",
       },
     },
-  ]
+  ];
 }
 
 /** Walks the flow, mutating and returning the state. Halts propagate. */
-export async function walkFlow (deps: QuickstartDeps, nodes: FlowNode[] = buildFlow()): Promise<QuickstartState> {
-  const state: QuickstartState = { target: 'cloud-serverless' }
+export async function walkFlow(
+  deps: QuickstartDeps,
+  nodes: FlowNode[] = buildFlow(),
+): Promise<QuickstartState> {
+  const state: QuickstartState = { target: "cloud-serverless" };
   for (const node of nodes) {
-    await node.run(state, deps)
+    await node.run(state, deps);
   }
-  return state
+  return state;
 }

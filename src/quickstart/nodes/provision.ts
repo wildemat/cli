@@ -12,9 +12,9 @@
  * `--save-as` does the credential/endpoint/context work; nothing is
  * reimplemented here.
  *
- * A `403 projects.create_project.forbidden` is a known branch: fresh trial
- * orgs may not be entitled to Vector DB projects at launch, so the user is
- * offered a Search project optimized for vectors instead.
+ * A `403 projects.create_project.forbidden` is a known branch: the key may
+ * lack entitlement (or be the wrong key), so the user can paste a different
+ * API key and retry, or create a Search project optimized for vectors instead.
  */
 
 import {
@@ -23,33 +23,44 @@ import {
   upsertContext,
   hasInlineSecrets,
   type RawContext,
-} from '../../config/writer.ts'
-import { resolveConfigPathForWrite } from '../../config/loader.ts'
-import { getSecretStore } from '../../config/secret-store.ts'
-import { DEFAULT_PROJECT_NAME, METADATA_TAGS_BY_TYPE, REGION_PREFERENCE } from '../constants.ts'
-import { mintEsApiKey } from '../es-keys.ts'
-import { hl } from '../prompts.ts'
-import { QuickstartHalt, projectCommandGroup, type ProjectType, type QuickstartDeps } from '../types.ts'
-import type { CliResult } from '../executor.ts'
+} from "../../config/writer.ts";
+import { resolveConfigPathForWrite } from "../../config/loader.ts";
+import { getSecretStore } from "../../config/secret-store.ts";
+import { checkCloud } from "../../status/checks.ts";
+import {
+  DEFAULT_PROJECT_NAME,
+  METADATA_TAGS_BY_TYPE,
+  REGION_PREFERENCE,
+} from "../constants.ts";
+import { mintEsApiKey } from "../es-keys.ts";
+import { hl } from "../prompts.ts";
+import {
+  QuickstartHalt,
+  projectCommandGroup,
+  type ProjectType,
+  type QuickstartDeps,
+} from "../types.ts";
+import type { CliResult } from "../executor.ts";
+import { persistCloudApiKey } from "./auth.ts";
 
-const KEYCHAIN_SERVICE = 'elastic-cli'
+const KEYCHAIN_SERVICE = "elastic-cli";
 
 export interface ProvisionResult {
-  projectType: ProjectType
-  projectId: string
-  projectName: string
-  regionId: string
+  projectType: ProjectType;
+  projectId: string;
+  projectName: string;
+  regionId: string;
   /** Context written by --save-as; later nodes run against it. */
-  projectContextName: string
-  endpoints: { elasticsearch?: string, kibana?: string }
+  projectContextName: string;
+  endpoints: { elasticsearch?: string; kibana?: string };
   /** False when the context kept the admin basic-auth pair instead. */
-  esApiKeyMinted: boolean
+  esApiKeyMinted: boolean;
 }
 
 interface Region {
-  id: string
-  name?: string
-  project_creation_enabled?: boolean
+  id: string;
+  name?: string;
+  project_creation_enabled?: boolean;
 }
 
 /**
@@ -58,228 +69,357 @@ interface Region {
  * no geolocation endpoint). Best-effort: an empty result falls back to the
  * static preference list.
  */
-export function regionFragmentsForTimezone (tz: string | undefined): string[] {
-  if (tz == null || tz === '') return []
-  if (/^(Europe|Africa|Atlantic)\//.test(tz)) return ['eu-west', '-eu-', 'europe']
-  if (/^(Asia|Australia|Indian)\//.test(tz)) return ['ap-southeast', '-ap-', 'asia']
-  if (/^(America|Pacific|US)\//.test(tz)) return ['us-east', '-us-', 'us-central']
-  return []
+export function regionFragmentsForTimezone(tz: string | undefined): string[] {
+  if (tz == null || tz === "") return [];
+  if (/^(Europe|Africa|Atlantic)\//.test(tz))
+    return ["eu-west", "-eu-", "europe"];
+  if (/^(Asia|Australia|Indian)\//.test(tz))
+    return ["ap-southeast", "-ap-", "asia"];
+  if (/^(America|Pacific|US)\//.test(tz))
+    return ["us-east", "-us-", "us-central"];
+  return [];
 }
 
 /** Picks the default region: timezone hint, then preference list, then first creatable. */
-export function pickDefaultRegion (regions: Region[], tzFragments: string[] = []): Region | undefined {
-  const creatable = regions.filter((r) => r.project_creation_enabled !== false)
+export function pickDefaultRegion(
+  regions: Region[],
+  tzFragments: string[] = [],
+): Region | undefined {
+  const creatable = regions.filter((r) => r.project_creation_enabled !== false);
   for (const fragment of tzFragments) {
-    const hit = creatable.find((r) => r.id.includes(fragment))
-    if (hit != null) return hit
+    const hit = creatable.find((r) => r.id.includes(fragment));
+    if (hit != null) return hit;
   }
   for (const preferred of REGION_PREFERENCE) {
-    const hit = creatable.find((r) => r.id === preferred)
-    if (hit != null) return hit
+    const hit = creatable.find((r) => r.id === preferred);
+    if (hit != null) return hit;
   }
-  return creatable[0]
+  return creatable[0];
 }
 
 /** First name in quickstart, quickstart-2, ... not present in `taken`. */
-export function firstFreeName (taken: Set<string>, base: string = DEFAULT_PROJECT_NAME): string {
-  if (!taken.has(base)) return base
+export function firstFreeName(
+  taken: Set<string>,
+  base: string = DEFAULT_PROJECT_NAME,
+): string {
+  if (!taken.has(base)) return base;
   for (let i = 2; ; i++) {
-    const candidate = `${base}-${i}`
-    if (!taken.has(candidate)) return candidate
+    const candidate = `${base}-${i}`;
+    if (!taken.has(candidate)) return candidate;
   }
 }
 
-export async function runProvisionNode (
+export async function runProvisionNode(
   deps: QuickstartDeps,
   cloudContextName: string,
 ): Promise<ProvisionResult> {
-  const { prompter, runCli } = deps
+  const { prompter, runCli } = deps;
 
   // Region: fetch, default, display.
-  const regionsResult = await runCli(
-    ['cloud', 'serverless', 'regions', 'list-regions', '--use-context', cloudContextName],
-  )
+  const regionsResult = await runCli([
+    "cloud",
+    "serverless",
+    "regions",
+    "list-regions",
+    "--use-context",
+    cloudContextName,
+  ]);
   if (!regionsResult.ok) {
-    const detail = regionsResult.error?.message ??
-      (regionsResult.stderr.trim() || `exit code ${regionsResult.exitCode}`)
+    const detail =
+      regionsResult.error?.message ??
+      (regionsResult.stderr.trim() || `exit code ${regionsResult.exitCode}`);
     throw new QuickstartHalt(
-      'regions_failed',
+      "regions_failed",
       `Could not list serverless regions: ${detail}`,
       [
-        'Check connectivity and credentials: elastic status',
+        "Check connectivity and credentials: elastic status",
         `Re-list: elastic cloud serverless regions list-regions --use-context ${cloudContextName}`,
       ],
-    )
+    );
   }
-  const regions = Array.isArray(regionsResult.data) ? regionsResult.data as unknown as Region[] : []
-  let region = pickDefaultRegion(regions, regionFragmentsForTimezone(deps.timezone))
+  const regions = Array.isArray(regionsResult.data)
+    ? (regionsResult.data as unknown as Region[])
+    : [];
+  let region = pickDefaultRegion(
+    regions,
+    regionFragmentsForTimezone(deps.timezone),
+  );
   if (region == null) {
     throw new QuickstartHalt(
-      'no_region',
-      'Could not find a serverless region that allows project creation.',
-      ['Check connectivity: elastic status', 'List regions: elastic cloud serverless regions list-regions'],
-    )
+      "no_region",
+      "Could not find a serverless region that allows project creation.",
+      [
+        "Check connectivity: elastic status",
+        "List regions: elastic cloud serverless regions list-regions",
+      ],
+    );
   }
-  const regionChoice = await prompter.select('Which region? (a project\'s region cannot be changed later)', [
-    { value: 'default', label: `Default — ${region.name ?? region.id}`, hint: `${region.id}, guessed from your timezone` },
-    { value: 'choose', label: 'Choose my own', hint: 'list every available region' },
-  ])
-  if (regionChoice === 'choose') {
-    const creatable = regions.filter((r) => r.project_creation_enabled !== false)
+  const regionChoice = await prompter.select(
+    "Which region? (a project's region cannot be changed later)",
+    [
+      {
+        value: "default",
+        label: `Default — ${region.name ?? region.id}`,
+        hint: `${region.id}, guessed from your timezone`,
+      },
+      {
+        value: "choose",
+        label: "Choose my own",
+        hint: "list every available region",
+      },
+    ],
+  );
+  if (regionChoice === "choose") {
+    const creatable = regions.filter(
+      (r) => r.project_creation_enabled !== false,
+    );
     const pickedId = await prompter.select(
-      'Pick a region',
-      creatable.map((r) => ({ value: r.id, label: r.name ?? r.id, hint: r.id })),
-    )
-    region = creatable.find((r) => r.id === pickedId) ?? region
+      "Pick a region",
+      creatable.map((r) => ({
+        value: r.id,
+        label: r.name ?? r.id,
+        hint: r.id,
+      })),
+    );
+    region = creatable.find((r) => r.id === pickedId) ?? region;
   }
-  prompter.info(`Region: ${hl.val(region.name ?? region.id)} (${region.id})`)
+  prompter.info(`Region: ${hl.val(region.name ?? region.id)} (${region.id})`);
 
   // Name: default, suffixed past existing projects and contexts. The context
   // written by --save-as shares the project name, so both namespaces count.
-  const taken = new Set<string>()
-  const listResult = await runCli(
-    ['cloud', 'serverless', 'projects', 'vector', 'list', '--use-context', cloudContextName],
-  )
-  const items = (listResult.data as { items?: Array<{ name?: string }> } | undefined)?.items
+  const taken = new Set<string>();
+  const listResult = await runCli([
+    "cloud",
+    "serverless",
+    "projects",
+    "vector",
+    "list",
+    "--use-context",
+    cloudContextName,
+  ]);
+  const items = (
+    listResult.data as { items?: Array<{ name?: string }> } | undefined
+  )?.items;
   for (const item of items ?? []) {
-    if (typeof item.name === 'string') taken.add(item.name)
+    if (typeof item.name === "string") taken.add(item.name);
   }
-  const rawConfig = await readRawConfig(await resolveConfigPathForWrite())
-  for (const ctxName of Object.keys(rawConfig.contexts)) taken.add(ctxName)
-  const name = firstFreeName(taken)
+  const rawConfig = await readRawConfig(await resolveConfigPathForWrite());
+  for (const ctxName of Object.keys(rawConfig.contexts)) taken.add(ctxName);
+  const name = firstFreeName(taken);
 
   // One create journey for both types: same metadata funnel tags, same
   // spinner/phase treatment, same --wait/--save-as. The entitlement fallback
   // is this exact journey re-run with the Search type, not a hand-copied argv.
   const buildCreateArgv = (type: ProjectType): string[] => [
-    'cloud', 'serverless', 'projects', projectCommandGroup(type), 'create',
-    '--name', name,
-    '--region-id', region.id,
-    ...(type === 'elasticsearch' ? ['--optimized-for', 'vector'] : []),
-    '--metadata', JSON.stringify({ tags: METADATA_TAGS_BY_TYPE[type] }),
-    '--wait',
-    '--save-as', name,
-    '--use-context', cloudContextName,
-  ]
+    "cloud",
+    "serverless",
+    "projects",
+    projectCommandGroup(type),
+    "create",
+    "--name",
+    name,
+    "--region-id",
+    region.id,
+    ...(type === "elasticsearch" ? ["--optimized-for", "vector"] : []),
+    "--metadata",
+    JSON.stringify({ tags: METADATA_TAGS_BY_TYPE[type] }),
+    "--wait",
+    "--save-as",
+    name,
+    "--use-context",
+    cloudContextName,
+  ];
 
   const createProject = async (type: ProjectType): Promise<CliResult> => {
-    const label = type === 'vectordb' ? 'Vector DB' : 'Search (optimized for vectors)'
-    const base = `Creating ${label} project "${name}" (takes ~2 minutes)…`
-    const spin = prompter.spinner(base)
-    const started = Date.now()
+    const label =
+      type === "vectordb" ? "Vector DB" : "Search (optimized for vectors)";
+    const base = `Creating ${label} project "${name}" (takes ~2 minutes)…`;
+    const spin = prompter.spinner(base);
+    const started = Date.now();
     // The subprocess only emits a phase line per --wait poll (~10s); a local
     // ticker keeps the elapsed counter moving every second between polls.
-    let phase = ''
+    let phase = "";
     const render = (): void => {
-      const elapsed = Math.round((Date.now() - started) / 1000)
-      spin.message(`${base}${phase !== '' ? ` ${phase}` : ''} (${elapsed}s)`)
-    }
-    const ticker = setInterval(render, 1000)
-    ticker.unref()
-    let result: CliResult
+      const elapsed = Math.round((Date.now() - started) / 1000);
+      spin.message(`${base}${phase !== "" ? ` ${phase}` : ""} (${elapsed}s)`);
+    };
+    const ticker = setInterval(render, 1000);
+    ticker.unref();
+    let result: CliResult;
     try {
       result = await runCli(buildCreateArgv(type), {
         onStderrLine: (line) => {
-          phase = line.replace(/^Waiting for project\.\.\.\s*/, '')
-          render()
+          phase = line.replace(/^Waiting for project\.\.\.\s*/, "");
+          render();
         },
-      })
+      });
     } finally {
-      clearInterval(ticker)
+      clearInterval(ticker);
     }
     if (result.ok) {
-      spin.stop(`${label} project "${name}" is ready.`)
-    } else if (type === 'vectordb' && isEntitlementError(result.error?.message)) {
-      spin.fail('This organization cannot create Vector DB projects yet.')
-    } else if (result.error?.code === 'wait_timeout') {
-      spin.fail(`${label} project "${name}" was created, but did not finish initializing in time.`)
+      spin.stop(`${label} project "${name}" is ready.`);
+    } else if (isForbiddenError(result.error?.message)) {
+      spin.fail(
+        "403 Forbidden: Unable to create project with provided API key.",
+      );
+    } else if (result.error?.code === "wait_timeout") {
+      spin.fail(
+        `${label} project "${name}" was created, but did not finish initializing in time.`,
+      );
     } else {
-      spin.fail('Project creation failed.')
+      spin.fail("Project creation failed.");
     }
-    return result
-  }
+    return result;
+  };
 
-  let projectType: ProjectType = 'vectordb'
-  let created = await createProject(projectType)
+  let projectType: ProjectType = "vectordb";
+  let created = await createProject(projectType);
 
-  if (!created.ok && isEntitlementError(created.error?.message)) {
-    prompter.warn('Your trial may not be entitled to the Vector DB project type at this time.')
-    const fallback = await prompter.confirm('Create a Search project optimized for vectors instead?')
-    if (!fallback) {
+  while (!created.ok && isForbiddenError(created.error?.message)) {
+    prompter.warn(
+      "Unable to create the project — invalid API key or insufficient permissions.",
+    );
+    const options = [
+      {
+        value: "new_key",
+        label: "Enter a different API key",
+        hint: "replace the Cloud key in this context and retry",
+      },
+      ...(projectType === "vectordb"
+        ? [
+            {
+              value: "search",
+              label: "Create a Search project optimized for vectors instead",
+              hint: "same demo path when Vector DB is not entitled",
+            },
+          ]
+        : []),
+      {
+        value: "abort",
+        label: "Cancel",
+        hint: "stop without creating a project",
+      },
+    ];
+    const choice = await prompter.select(
+      "How do you want to continue?",
+      options,
+    );
+    if (choice === "abort") {
       throw new QuickstartHalt(
-        'vectordb_forbidden',
-        'Vector DB project creation is not enabled for this organization.',
-        ['Ask your Elastic contact about Vector DB availability', 'Re-run: elastic quickstart'],
-      )
+        "vectordb_forbidden",
+        "Vector DB project creation is not enabled for this organization.",
+        [
+          "Ask your Elastic contact about Vector DB availability",
+          `Create a key with the right role at ${deps.cloudEnv.apiKeysUrl}`,
+          "Re-run: elastic quickstart",
+        ],
+      );
     }
-    projectType = 'elasticsearch'
-    created = await createProject(projectType)
+    if (choice === "search") {
+      projectType = "elasticsearch";
+      created = await createProject(projectType);
+      continue;
+    }
+    // new_key
+    const { apiKeysUrl, apiUrl } = deps.cloudEnv;
+    prompter.info(
+      `Create or copy a key at ${hl.url(apiKeysUrl)} (Organization owner works for a fresh account). Contact your admin if you need help creating an API key.`,
+    );
+    deps.openBrowser(apiKeysUrl);
+    const key = (
+      await prompter.password("Paste your Elastic Cloud API key")
+    ).trim();
+    if (key.length === 0) {
+      prompter.warn("No key pasted — pick an option again.");
+      continue;
+    }
+    const probe = await checkCloud(
+      { url: apiUrl, auth: { api_key: key } },
+      deps.fetchFn,
+    );
+    if (!probe.ok) {
+      prompter.warn(
+        `That key did not work — this check failed: GET ${apiUrl}/api/v1/user.`,
+      );
+      continue;
+    }
+    await persistCloudApiKey(cloudContextName, key, apiUrl);
+    prompter.success(
+      `API key verified and saved to context "${cloudContextName}"`,
+    );
+    created = await createProject(projectType);
   }
 
-  const group = projectCommandGroup(projectType)
+  const group = projectCommandGroup(projectType);
   if (!created.ok) {
     // --wait timed out: the project exists, but its one-time credentials were
     // never captured and no context was saved. Re-running the create would
     // bill a second project — send the user to the console instead.
-    if (created.error?.code === 'wait_timeout') {
+    if (created.error?.code === "wait_timeout") {
       throw new QuickstartHalt(
-        'provision_wait_timeout',
+        "provision_wait_timeout",
         `The project "${name}" was created, but did not finish initializing in time.`,
         [
           `Find it in the Elastic Cloud console: ${deps.cloudEnv.projectsUrl}`,
-          'When it is ready, create an Elasticsearch API key from the project page',
+          "When it is ready, create an Elasticsearch API key from the project page",
           `Paste it into a context: elastic config context add ${name} --es-url <endpoint from the console> --es-api-key <key>`,
           `Check it works: elastic status --use-context ${name}`,
         ],
-      )
+      );
     }
     // The project may exist even though saving the context failed (e.g. the
     // OS keychain refused the write). Don't let a re-run create a duplicate.
-    if (created.error?.code === 'credential_policy_error') {
+    if (created.error?.code === "credential_policy_error") {
       throw new QuickstartHalt(
-        'context_save_failed',
+        "context_save_failed",
         `The project was created, but saving its credentials failed: ${created.error.message}`,
         [
           `Find its id: elastic cloud serverless projects ${group} list --use-context ${cloudContextName}`,
           `Save credentials to a context: elastic cloud serverless projects ${group} reset-credentials --id <id> --save-as ${name} --use-context ${cloudContextName}`,
         ],
-      )
+      );
     }
     throw new QuickstartHalt(
-      'provision_failed',
-      created.error?.message ?? `project creation exited with code ${created.exitCode}`,
+      "provision_failed",
+      created.error?.message ??
+        `project creation exited with code ${created.exitCode}`,
       [
-        'Retry manually: elastic ' + buildCreateArgv(projectType).join(' '),
-        'Check your organization in the Cloud console',
+        "Retry manually: elastic " + buildCreateArgv(projectType).join(" "),
+        "Check your organization in the Cloud console",
       ],
-    )
+    );
   }
 
-  const body = (created.data ?? {}) as Record<string, unknown>
-  const endpoints = (body.endpoints ?? {}) as { elasticsearch?: string, kibana?: string }
-  const savedAs = typeof body.savedAs === 'string' ? body.savedAs : name
+  const body = (created.data ?? {}) as Record<string, unknown>;
+  const endpoints = (body.endpoints ?? {}) as {
+    elasticsearch?: string;
+    kibana?: string;
+  };
+  const savedAs = typeof body.savedAs === "string" ? body.savedAs : name;
 
-  prompter.success(`Connection saved as context "${savedAs}" (credentials in your OS keychain)`)
+  prompter.success(
+    `Connection saved as context "${savedAs}" (credentials in your OS keychain)`,
+  );
 
   // Everything downstream of the handoff (client code, apps, agents) wants an
   // API key, not the admin basic-auth pair --save-as stores. Mint one and make
   // it the context's Elasticsearch credential; agents then reference it by
   // running commands with --use-context, never by handling the raw value.
-  const esApiKeyMinted = await mintContextApiKey(deps, savedAs)
+  const esApiKeyMinted = await mintContextApiKey(deps, savedAs);
 
   return {
     projectType,
-    projectId: typeof body.id === 'string' ? body.id : '',
+    projectId: typeof body.id === "string" ? body.id : "",
     projectName: name,
     regionId: region.id,
     projectContextName: savedAs,
     endpoints,
     esApiKeyMinted,
-  }
+  };
 }
 
-const MINT_MAX_ATTEMPTS = 6
-const MINT_RETRY_DELAY_MS = 10_000
+const MINT_MAX_ATTEMPTS = 6;
+const MINT_RETRY_DELAY_MS = 10_000;
 
 /**
  * Mints an ES API key against the new context (subprocess; the key travels
@@ -291,26 +431,44 @@ const MINT_RETRY_DELAY_MS = 10_000
  * failures until success or the attempt budget runs out. Returns false on
  * terminal failure — basic auth remains and the run continues.
  */
-async function mintContextApiKey (deps: QuickstartDeps, contextName: string): Promise<boolean> {
-  const { prompter, runCli, sleep } = deps
-  const spin = prompter.spinner('Minting an Elasticsearch API key…')
+async function mintContextApiKey(
+  deps: QuickstartDeps,
+  contextName: string,
+): Promise<boolean> {
+  const { prompter, runCli, sleep } = deps;
+  const spin = prompter.spinner("Minting an Elasticsearch API key…");
 
   for (let attempt = 1; attempt <= MINT_MAX_ATTEMPTS; attempt++) {
-    const { result, encoded } = await mintEsApiKey(runCli, `${contextName}-quickstart`, contextName)
+    const { result, encoded } = await mintEsApiKey(
+      runCli,
+      `${contextName}-quickstart`,
+      contextName,
+    );
     if (result.ok && encoded != null) {
       if (await storeMintedKey(contextName, encoded)) {
-        spin.stop(`Minted an Elasticsearch API key and stored it in context "${contextName}"`)
-        return true
+        spin.stop(
+          `Minted an Elasticsearch API key and stored it in context "${contextName}"`,
+        );
+        return true;
       }
-      break
+      break;
     }
-    if (result.ok || !isRetryableMintFailure(result) || attempt === MINT_MAX_ATTEMPTS) break
-    spin.message(`Minting an Elasticsearch API key… project not accepting requests yet (retry ${attempt}/${MINT_MAX_ATTEMPTS - 1})`)
-    await sleep(MINT_RETRY_DELAY_MS)
+    if (
+      result.ok ||
+      !isRetryableMintFailure(result) ||
+      attempt === MINT_MAX_ATTEMPTS
+    )
+      break;
+    spin.message(
+      `Minting an Elasticsearch API key… project not accepting requests yet (retry ${attempt}/${MINT_MAX_ATTEMPTS - 1})`,
+    );
+    await sleep(MINT_RETRY_DELAY_MS);
   }
 
-  spin.fail('Could not mint an API key; the context keeps the project\'s basic-auth credentials (everything still works).')
-  return false
+  spin.fail(
+    "Could not mint an API key; the context keeps the project's basic-auth credentials (everything still works).",
+  );
+  return false;
 }
 
 /**
@@ -318,45 +476,60 @@ async function mintContextApiKey (deps: QuickstartDeps, contextName: string): Pr
  * connection-level (no envelope, connection/timeout codes) and server-side
  * 5xx/429/408. Envelope-coded config errors and other 4xx are terminal.
  */
-function isRetryableMintFailure (result: CliResult): boolean {
-  const err = result.error
-  if (err == null) return true
-  if (err.status != null) return err.status >= 500 || err.status === 429 || err.status === 408
-  return err.code === 'connection_error' || err.code === 'timeout' || err.code === 'transport_error'
+function isRetryableMintFailure(result: CliResult): boolean {
+  const err = result.error;
+  if (err == null) return true;
+  if (err.status != null)
+    return err.status >= 500 || err.status === 429 || err.status === 408;
+  return (
+    err.code === "connection_error" ||
+    err.code === "timeout" ||
+    err.code === "transport_error"
+  );
 }
 
 /** Writes the minted key into the context via the writer + secret store. */
-async function storeMintedKey (contextName: string, encoded: string): Promise<boolean> {
+async function storeMintedKey(
+  contextName: string,
+  encoded: string,
+): Promise<boolean> {
   try {
-    const configPath = await resolveConfigPathForWrite()
-    const config = await readRawConfig(configPath)
-    const existing = config.contexts[contextName]
-    if (existing == null) return false
+    const configPath = await resolveConfigPathForWrite();
+    const config = await readRawConfig(configPath);
+    const existing = config.contexts[contextName];
+    if (existing == null) return false;
 
-    const store = await getSecretStore()
-    let keyValue = encoded
+    const store = await getSecretStore();
+    let keyValue = encoded;
     if (await store.isAvailable()) {
-      const account = `${contextName}:elasticsearch.auth.api_key`
-      await store.put(KEYCHAIN_SERVICE, account, encoded)
-      keyValue = store.resolverExpr(KEYCHAIN_SERVICE, account)
+      const account = `${contextName}:elasticsearch.auth.api_key`;
+      await store.put(KEYCHAIN_SERVICE, account, encoded);
+      keyValue = store.resolverExpr(KEYCHAIN_SERVICE, account);
     }
 
-    const esBlock = existing.elasticsearch
-    if (esBlock == null || typeof esBlock !== 'object') return false
+    const esBlock = existing.elasticsearch;
+    if (esBlock == null || typeof esBlock !== "object") return false;
     const nextContext: RawContext = {
       ...existing,
-      elasticsearch: { ...(esBlock as Record<string, unknown>), auth: { api_key: keyValue } },
-    }
-    const next = upsertContext(config, contextName, nextContext)
-    await writeConfig(configPath, next, { restrictPermissions: hasInlineSecrets(next) })
-    return true
+      elasticsearch: {
+        ...(esBlock as Record<string, unknown>),
+        auth: { api_key: keyValue },
+      },
+    };
+    const next = upsertContext(config, contextName, nextContext);
+    await writeConfig(configPath, next, {
+      restrictPermissions: hasInlineSecrets(next),
+    });
+    return true;
   } catch {
-    return false
+    return false;
   }
 }
 
-function isEntitlementError (message: string | undefined): boolean {
-  if (message == null) return false
-  return message.includes('create_project.forbidden') ||
-    (message.includes('403') && message.toLowerCase().includes('forbidden'))
+function isForbiddenError(message: string | undefined): boolean {
+  if (message == null) return false;
+  return (
+    message.includes("create_project.forbidden") ||
+    (message.includes("403") && message.toLowerCase().includes("forbidden"))
+  );
 }

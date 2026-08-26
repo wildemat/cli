@@ -59,18 +59,36 @@ describe('buildRunbook', () => {
   it('is a versioned, self-describing contract', () => {
     assert.equal(runbook.schema_version, 1)
     assert.equal(runbook.kind, 'elastic-quickstart-runbook')
-    assert.match(String(runbook.for_agents), /do not re-invoke/)
+    assert.match(String(runbook.for_agents), /elastic quickstart --json/)
+    assert.match(String(runbook.for_agents), /do not run bare|never re-invoke|do not re-invoke/i)
     assert.ok((runbook.discovery as Record<string, string>).full_schema.includes('cli-schema'))
+    assert.equal((runbook.discovery as Record<string, string>).bootstrap, 'elastic quickstart --json')
   })
 
   it('covers the whole flow in order', () => {
     assert.deepEqual(steps.map((s) => s.id), ['auth', 'provision', 'verify', 'value', 'handoff'])
   })
 
+  it('documents auth key storage: separate-terminal vs env+inline-secrets', () => {
+    const auth = steps.find((s) => s.id === 'auth')!
+    const ask = String((auth as { ask_user?: string }).ask_user ?? '')
+    assert.match(ask, /Pick ONE/)
+    assert.match(ask, /Separate terminal/)
+    assert.match(ask, /Paste in chat/)
+    assert.match(ask, /--inline-secrets/)
+    const cmds = auth.commands ?? []
+    assert.ok(cmds.some((c) => c.includes('--cloud-api-key <key>') && !c.includes('$(env:')))
+    assert.ok(cmds.some((c) =>
+      c.includes("$(env:ELASTIC_CLOUD_API_KEY)") && c.includes('--inline-secrets'),
+    ))
+    assert.match(String((auth as { notes?: string }).notes ?? ''), /Never pass \$\(env:/)
+  })
+
   it('documents the 403 entitlement branch and the console fallback', () => {
     const provision = steps.find((s) => s.id === 'provision')!
     const onFailure = provision.on_failure!
     const forbidden = onFailure['403 projects.create_project.forbidden']!
+    assert.match(forbidden, /different key|API key/)
     assert.match(forbidden, /--optimized-for vector/)
     // The fallback cohort reaches the funnel via source; no branch tag is
     // product-specified for the Search fallback.
@@ -97,6 +115,16 @@ describe('buildRunbook', () => {
     const create = (value.commands ?? []).find((c) => c.includes('es indices create'))!
     assert.match(create, /semantic_text/)
     assert.match(create, /--metadata|--mappings/)
+  })
+
+  it('requires the agent to present the search comparison before handoff', () => {
+    const value = steps.find((s) => s.id === 'value') as Step & { ask_user?: string, notes?: string }
+    assert.match(String(value.ask_user), /REQUIRED teaching beat|side-by-side|two-column/i)
+    assert.match(String(value.ask_user), /acknowledge|confirm/i)
+    assert.match(String(value.notes), /Skipping or summarizing/)
+    const handoff = steps.find((s) => s.id === 'handoff') as Step & { ask_user?: string }
+    assert.match(String(handoff.ask_user), /comparison was shown|acknowledged/i)
+    assert.match(String(runbook.for_agents), /educational pace|show the user the important output/i)
   })
 
   it('serializes cleanly to JSON', () => {

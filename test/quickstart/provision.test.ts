@@ -279,7 +279,7 @@ describe('runProvisionNode', () => {
       mintRoute,
     ])
     const result = await runProvisionNode(
-      fakeDeps(fakePrompter({ selects: ['default'], confirms: [true] }), runCli),
+      fakeDeps(fakePrompter({ selects: ['default', 'search'] }), runCli),
       'cloud-ctx',
     )
     assert.equal(result.projectType, 'elasticsearch')
@@ -294,6 +294,77 @@ describe('runProvisionNode', () => {
     assert.ok(searchCreate.argv.includes('--save-as'))
   })
 
+  it('retries Vector DB create after the user pastes a new API key on 403', async () => {
+    await writeFile(configFile, [
+      'current_context: cloud-ctx',
+      'contexts:',
+      '  cloud-ctx:',
+      '    cloud:',
+      '      url: https://api.elastic-cloud.com',
+      '      auth:',
+      '        api_key: old-key',
+    ].join('\n') + '\n', 'utf-8')
+
+    let vectorCreates = 0
+    const runCli = fakeRunCli([
+      { match: 'cloud serverless regions list-regions', result: ok(REGIONS) },
+      { match: 'cloud serverless projects vector list', result: ok({ items: [] }) },
+      {
+        match: 'cloud serverless projects vector create',
+        result: () => {
+          vectorCreates++
+          if (vectorCreates === 1) {
+            return fail('cloud_api_error', 'Cloud API error 403: {"errors":[{"code":"projects.create_project.forbidden"}]}')
+          }
+          // Preserve the cloud context that just received the replacement key.
+          writeFileSync(configFile, [
+            'current_context: quickstart',
+            'contexts:',
+            '  cloud-ctx:',
+            '    cloud:',
+            '      url: https://api.elastic-cloud.com',
+            '      auth:',
+            '        api_key: replacement-key',
+            '  quickstart:',
+            '    elasticsearch:',
+            '      url: https://es.example',
+            '      auth:',
+            '        username: admin',
+            '        password: basic-pass',
+            '    kibana:',
+            '      url: https://kb.example',
+            '      auth:',
+            '        username: admin',
+            '        password: basic-pass',
+          ].join('\n') + '\n', 'utf-8')
+          return ok(CREATED)
+        },
+      },
+      mintRoute,
+    ])
+    const fetchFn = (async (_url: unknown, init?: { headers?: Record<string, string> }) => {
+      const auth = init?.headers?.Authorization ?? ''
+      const good = auth === 'ApiKey replacement-key'
+      return { ok: good, status: good ? 200 : 401, text: async () => '{}' }
+    }) as unknown as typeof fetch
+
+    const result = await runProvisionNode(
+      fakeDeps(
+        fakePrompter({ selects: ['default', 'new_key'], passwords: ['replacement-key'] }),
+        runCli,
+        { fetchFn },
+      ),
+      'cloud-ctx',
+    )
+    assert.equal(result.projectType, 'vectordb')
+    assert.equal(vectorCreates, 2)
+    const written = parseYaml(await readFile(configFile, 'utf-8')) as {
+      contexts: Record<string, { cloud?: { auth?: { api_key?: string } } }>
+    }
+    assert.equal(written.contexts['cloud-ctx']?.cloud?.auth?.api_key, 'replacement-key')
+    assert.equal(runCli.calls.filter((c) => c.argv.join(' ').includes('projects search create')).length, 0)
+  })
+
   it('halts with search-namespace retry guidance when the fallback create also fails', async () => {
     const runCli = fakeRunCli([
       { match: 'cloud serverless regions list-regions', result: ok(REGIONS) },
@@ -305,7 +376,7 @@ describe('runProvisionNode', () => {
       { match: 'cloud serverless projects search create', result: fail('cloud_api_error', 'quota exceeded') },
     ])
     await assert.rejects(
-      runProvisionNode(fakeDeps(fakePrompter({ selects: ['default'], confirms: [true] }), runCli), 'cloud-ctx'),
+      runProvisionNode(fakeDeps(fakePrompter({ selects: ['default', 'search'] }), runCli), 'cloud-ctx'),
       (err: unknown) => err instanceof QuickstartHalt &&
         err.code === 'provision_failed' &&
         err.nextSteps.some((s) => s.includes('projects search create')),
@@ -345,7 +416,7 @@ describe('runProvisionNode', () => {
     )
   })
 
-  it('halts when the 403 fallback is declined', async () => {
+  it('halts when the 403 recovery is cancelled', async () => {
     const runCli = fakeRunCli([
       { match: 'cloud serverless regions list-regions', result: ok(REGIONS) },
       { match: 'cloud serverless projects vector list', result: ok({ items: [] }) },
@@ -355,7 +426,7 @@ describe('runProvisionNode', () => {
       },
     ])
     await assert.rejects(
-      runProvisionNode(fakeDeps(fakePrompter({ selects: ['default'], confirms: [false] }), runCli), 'cloud-ctx'),
+      runProvisionNode(fakeDeps(fakePrompter({ selects: ['default', 'abort'] }), runCli), 'cloud-ctx'),
       (err: unknown) => err instanceof QuickstartHalt && err.code === 'vectordb_forbidden',
     )
   })

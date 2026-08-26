@@ -55,10 +55,11 @@ export function translate (nodes: FlowNode[], cloudEnv: CloudEnv): JsonValue {
     schema_version: QUICKSTART_SCHEMA_VERSION,
     kind: 'elastic-quickstart-runbook',
     goal: 'Take a brand-new Elastic user from nothing to a working Vector DB serverless project on Elastic Cloud with sample data indexed and a proof-of-value semantic-vs-keyword comparison, then keep building their search application.',
-    for_agents: 'You are driving. Interview your user where a step says ask_user, run the commands yourself with --json, and do not re-invoke `elastic quickstart`. Discover any command\'s full input schema with `elastic <command> --help --json` or the whole surface with `elastic cli-schema`.',
+    for_agents: 'Bootstrap: run `elastic quickstart --json` once (required — do not run bare `elastic quickstart`; agents often have a PTY and would enter interactive mode). Treat stdout as your only plan (kind=elastic-quickstart-runbook). Walk steps in order at a human educational pace: announce each step, run its commands, show the user the important output (especially search hits), and wait on ask_user before continuing — do not batch, summarize-away, or skip ahead to cleanup/handoff. Interview on ask_user; run listed commands with --json; follow on_failure when present. After bootstrap, never re-invoke `elastic quickstart`. Discover schemas with `elastic <command> --help --json` or `elastic cli-schema`.',
     discovery: {
       command_help: 'elastic cloud --help --json',
       full_schema: 'elastic cli-schema',
+      bootstrap: 'elastic quickstart --json',
     },
     steps,
     reference_app: bookshopAgentGuide() as JsonValue,

@@ -22,6 +22,8 @@ describe('registerQuickstartCommand', () => {
     const flags = cmd.options.map((o) => o.long)
     assert.deepEqual(flags, ['--dry-run'])
     assert.equal(cmd.registeredArguments.length, 0, 'no positional args allowed')
+    assert.match(cmd.description(), /--json/)
+    assert.match(cmd.description(), /do not run interactively|Agents:/i)
   })
 })
 
